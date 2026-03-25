@@ -95,6 +95,11 @@ function RealtimeMeeting() {
   const [joining, setJoining] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [displayName, setDisplayName] = useState(() => {
+    const stored = readStoredUser();
+    if (!stored?.email) return '';
+    return stored.email.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  });
 
   const fetchTokenAndJoin = async (
     meetingId: string,
@@ -110,6 +115,7 @@ function RealtimeMeeting() {
       const clientData: Record<string, string> = {
         customParticipantId: stored.email,
       };
+      if (displayName.trim()) clientData.name = displayName.trim();
       if (presetName) clientData.presetName = presetName;
 
       const r = await fetch('https://api.vegvisr.org/realtime/join-token', {
@@ -203,7 +209,10 @@ function RealtimeMeeting() {
         },
         body: JSON.stringify({
           meetingId,
-          clientData: { customParticipantId: stored.email },
+          clientData: {
+            customParticipantId: stored.email,
+            name: displayName.trim() || stored.email.split('@')[0],
+          },
         }),
       })
         .then((r) => r.json())
@@ -239,6 +248,18 @@ function RealtimeMeeting() {
         <div className="text-center mb-2">
           <h1 className="text-2xl font-semibold text-white mb-1">Meetings</h1>
           <p className="text-slate-400 text-sm">Create a new meeting or join an existing one.</p>
+        </div>
+
+        {/* Display name */}
+        <div className="w-full max-w-sm">
+          <label className="block text-xs text-slate-400 mb-1">Your name</label>
+          <input
+            type="text"
+            className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:border-sky-500"
+            placeholder="Enter your name"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+          />
         </div>
 
         {/* Create Meeting */}
