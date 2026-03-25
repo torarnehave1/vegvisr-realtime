@@ -1,0 +1,37 @@
+{
+  "name": "vegvisr-realtime",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port=3001",
+    "build": "tsc && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@cloudflare/realtimekit": "^1.2.0",
+    "@cloudflare/realtimekit-react": "^1.2.0",
+    "@cloudflare/realtimekit-react-ui": "^1.0.6",
+    "@cloudflare/realtimekit-ui": "^1.0.6",
+    "@cloudflare/realtimekit-ui-addons": "^0.0.4",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tailwind-merge": "^3.5.0",
+    "vegvisr-ui-kit": "^1.4.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.24",
+    "@types/react-dom": "^18.0.8",
+    "@vitejs/plugin-react": "^2.2.0",
+    "autoprefixer": "^10.4.16",
+    "eslint": "^9.39.1",
+    "postcss": "^8.4.30",
+    "tailwindcss": "^3.3.3",
+    "typescript": "^4.6.4",
+    "vite": "^3.2.3"
+  }
+}
