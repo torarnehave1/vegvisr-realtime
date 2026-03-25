@@ -160,6 +160,11 @@ function RealtimeMeeting() {
   const [savingTitle, setSavingTitle] = useState(false);
   const [personalRoomTitle, setPersonalRoomTitle] = useState<string | null>(null);
   const [teamRoomTitle, setTeamRoomTitle] = useState<string | null>(null);
+  const [recordings, setRecordings] = useState<any[]>([]);
+  const [loadingRecordings, setLoadingRecordings] = useState(false);
+  const [renamingKey, setRenamingKey] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState(() => {
     const stored = readStoredUser();
     if (!stored?.email) return '';
@@ -356,6 +361,72 @@ function RealtimeMeeting() {
       setSavingTitle(false);
       setEditingRoomTitle(null);
     }
+  };
+
+  const fetchRecordings = async () => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    setLoadingRecordings(true);
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/recordings', {
+        headers: { 'X-API-Token': stored.emailVerificationToken },
+      });
+      const data = await r.json();
+      if (data.success) setRecordings(data.recordings || []);
+    } catch { /* ignore */ }
+    finally { setLoadingRecordings(false); }
+  };
+
+  const renameRecording = async (key: string, newName: string) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/recordings/rename', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Token': stored.emailVerificationToken,
+        },
+        body: JSON.stringify({ key, newName }),
+      });
+      const data = await r.json();
+      if (data.success) {
+        setRecordings(prev => prev.map(rec =>
+          rec.key === key ? { ...rec, key: data.newKey, name: newName } : rec
+        ));
+      }
+    } catch { /* ignore */ }
+    finally { setRenamingKey(null); }
+  };
+
+  const deleteRecording = async (key: string) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    setDeletingKey(key);
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/recordings/delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Token': stored.emailVerificationToken,
+        },
+        body: JSON.stringify({ key }),
+      });
+      const data = await r.json();
+      if (data.success) {
+        setRecordings(prev => prev.filter(rec => rec.key !== key));
+      }
+    } catch { /* ignore */ }
+    finally { setDeletingKey(null); }
+  };
+
+  const downloadRecording = (key: string) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    window.open(
+      `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(key)}&token=${encodeURIComponent(stored.emailVerificationToken)}`,
+      '_blank'
+    );
   };
 
   useEffect(() => {
@@ -669,6 +740,98 @@ function RealtimeMeeting() {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+
+        {/* Recordings */}
+        <div className="flex items-center w-full max-w-sm gap-3 mt-2">
+          <div className="flex-1 h-px bg-slate-700" />
+          <span className="text-slate-500 text-xs">recordings</span>
+          <div className="flex-1 h-px bg-slate-700" />
+        </div>
+
+        <div className="w-full max-w-sm">
+          <button
+            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-white text-sm w-full disabled:opacity-40"
+            disabled={loadingRecordings}
+            onClick={fetchRecordings}
+          >
+            {loadingRecordings ? 'Loading…' : '🎬 Load Recordings'}
+          </button>
+
+          {recordings.length > 0 && (
+            <div className="mt-3 flex flex-col gap-2 max-h-72 overflow-y-auto">
+              {recordings.map((rec: any) => {
+                const isSuperadmin = readStoredUser()?.role === 'Superadmin';
+                const sizeStr = rec.size > 1024 * 1024
+                  ? `${(rec.size / (1024 * 1024)).toFixed(1)} MB`
+                  : `${(rec.size / 1024).toFixed(0)} KB`;
+                return (
+                  <div key={rec.key} className="flex flex-col gap-1 bg-slate-800 border border-slate-700 rounded px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white text-sm truncate" title={rec.name}>{rec.name}</p>
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-500 text-xs">{sizeStr}</span>
+                          {rec.uploaded && <span className="text-slate-500 text-xs">{new Date(rec.uploaded).toLocaleString()}</span>}
+                        </div>
+                      </div>
+                      <button
+                        className="px-2 py-1 bg-sky-700 hover:bg-sky-600 rounded text-white text-xs whitespace-nowrap"
+                        onClick={() => downloadRecording(rec.key)}
+                        title="Download"
+                      >
+                        ⬇
+                      </button>
+                      {isSuperadmin && (
+                        <>
+                          <button
+                            className="px-2 py-1 text-slate-400 hover:text-white text-xs"
+                            title="Rename"
+                            onClick={() => { setRenamingKey(rec.key); setRenameDraft(rec.name); }}
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            className="px-2 py-1 bg-red-700 hover:bg-red-600 rounded text-white text-xs whitespace-nowrap disabled:opacity-40"
+                            onClick={() => deleteRecording(rec.key)}
+                            disabled={deletingKey === rec.key}
+                            title="Delete"
+                          >
+                            {deletingKey === rec.key ? '…' : '🗑'}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    {renamingKey === rec.key && (
+                      <div className="flex gap-2 mt-1">
+                        <input
+                          type="text"
+                          className="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-xs focus:outline-none focus:border-sky-500"
+                          value={renameDraft}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && renameDraft.trim() && renameRecording(rec.key, renameDraft.trim())}
+                          autoFocus
+                        />
+                        <button
+                          className="px-2 py-1 bg-sky-600 hover:bg-sky-500 rounded text-white text-xs"
+                          onClick={() => renameRecording(rec.key, renameDraft.trim())}
+                          disabled={!renameDraft.trim()}
+                        >
+                          Save
+                        </button>
+                        <button
+                          className="px-2 py-1 text-slate-500 hover:text-white text-xs"
+                          onClick={() => setRenamingKey(null)}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
