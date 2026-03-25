@@ -89,20 +89,54 @@ function Meeting() {
 
 function RealtimeMeeting() {
   const [meeting, initMeeting] = useRealtimeKitClient();
+  const [tokenError, setTokenError] = useState<string | null>(null);
 
   useEffect(() => {
     const searchParams = new URL(window.location.href).searchParams;
     const authToken = searchParams.get('authToken');
-
-    if (!authToken) return;
+    const meetingId = searchParams.get('meetingId');
 
     provideRtkDesignSystem(document.body, { theme: 'dark' });
 
-    initMeeting({
-      authToken,
-      defaults: { audio: false, video: false },
-    });
+    // Direct token in URL — use it immediately (legacy / invite link flow)
+    if (authToken) {
+      initMeeting({ authToken, defaults: { audio: false, video: false } });
+      return;
+    }
+
+    // Meeting ID in URL — fetch a fresh participant token from the backend.
+    // The logged-in user's emailVerificationToken authenticates the request;
+    // the RealtimeKit App Secret never leaves the server.
+    if (meetingId) {
+      const stored = readStoredUser();
+      if (!stored?.emailVerificationToken) {
+        setTokenError('You must be logged in to join this meeting.');
+        return;
+      }
+      fetch('https://api.vegvisr.org/realtime/join-token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Token': stored.emailVerificationToken,
+        },
+        body: JSON.stringify({ meetingId, clientData: stored.email }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (!data.authToken) throw new Error(data.error || 'No token returned from server');
+          initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
+        })
+        .catch((err) => setTokenError(err.message));
+    }
   }, []);
+
+  if (tokenError) {
+    return (
+      <div className="flex items-center justify-center h-full text-red-400 p-8 text-center">
+        {tokenError}
+      </div>
+    );
+  }
 
   return (
     <RealtimeKitProvider value={meeting}>

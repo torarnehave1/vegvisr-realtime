@@ -2,6 +2,7 @@ export type AuthUser = {
   userId: string;
   email: string;
   role?: string | null;
+  emailVerificationToken?: string | null;
 };
 
 export const readStoredUser = (): AuthUser | null => {
@@ -13,7 +14,12 @@ export const readStoredUser = (): AuthUser | null => {
     const userId = parsed.user_id || parsed.oauth_id;
     const email = parsed.email;
     if (!userId || !email) return null;
-    return { userId, email, role: parsed.role || null };
+    return {
+      userId,
+      email,
+      role: parsed.role || null,
+      emailVerificationToken: parsed.emailVerificationToken || null,
+    };
   } catch {
     return null;
   }
