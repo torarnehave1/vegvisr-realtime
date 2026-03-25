@@ -93,8 +93,13 @@ function RealtimeMeeting() {
   const [noParams, setNoParams] = useState(false);
   const [manualMeetingId, setManualMeetingId] = useState('');
   const [joining, setJoining] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
-  const joinByMeetingId = async (id: string) => {
+  const fetchTokenAndJoin = async (
+    meetingId: string,
+    presetName?: string,
+  ) => {
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) {
       setTokenError('You must be logged in to join this meeting.');
@@ -102,13 +107,18 @@ function RealtimeMeeting() {
     }
     setJoining(true);
     try {
+      const clientData: Record<string, string> = {
+        customParticipantId: stored.email,
+      };
+      if (presetName) clientData.presetName = presetName;
+
       const r = await fetch('https://api.vegvisr.org/realtime/join-token', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-API-Token': stored.emailVerificationToken,
         },
-        body: JSON.stringify({ meetingId: id, clientData: stored.email }),
+        body: JSON.stringify({ meetingId, clientData }),
       });
       const data = await r.json();
       if (!data.authToken) throw new Error(data.error || 'No token returned from server');
@@ -119,6 +129,24 @@ function RealtimeMeeting() {
     } finally {
       setJoining(false);
     }
+  };
+
+  const joinByMeetingId = (id: string) => fetchTokenAndJoin(id);
+
+  const createMeeting = async () => {
+    const newId = crypto.randomUUID();
+    const link = `${window.location.origin}/?meetingId=${newId}`;
+    setInviteLink(link);
+    setCopied(false);
+    await fetchTokenAndJoin(newId, 'group_call_host');
+  };
+
+  const copyInviteLink = () => {
+    if (!inviteLink) return;
+    navigator.clipboard.writeText(inviteLink).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
   };
 
   useEffect(() => {
@@ -136,8 +164,6 @@ function RealtimeMeeting() {
     }
 
     // Meeting ID in URL — fetch a fresh participant token from the backend.
-    // The logged-in user's emailVerificationToken authenticates the request;
-    // the RealtimeKit App Secret never leaves the server.
     if (meetingId) {
       const stored = readStoredUser();
       if (!stored?.emailVerificationToken) {
@@ -150,7 +176,10 @@ function RealtimeMeeting() {
           'Content-Type': 'application/json',
           'X-API-Token': stored.emailVerificationToken,
         },
-        body: JSON.stringify({ meetingId, clientData: stored.email }),
+        body: JSON.stringify({
+          meetingId,
+          clientData: { customParticipantId: stored.email },
+        }),
       })
         .then((r) => r.json())
         .then(async (data) => {
@@ -183,9 +212,50 @@ function RealtimeMeeting() {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-6 p-8">
         <div className="text-center mb-2">
-          <h1 className="text-2xl font-semibold text-white mb-1">Join a Meeting</h1>
-          <p className="text-slate-400 text-sm">Enter a meeting ID or use a meeting invite link.</p>
+          <h1 className="text-2xl font-semibold text-white mb-1">Meetings</h1>
+          <p className="text-slate-400 text-sm">Create a new meeting or join an existing one.</p>
         </div>
+
+        {/* Create Meeting */}
+        <button
+          className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-white font-medium disabled:opacity-40 w-full max-w-sm"
+          disabled={joining}
+          onClick={createMeeting}
+        >
+          {joining && !manualMeetingId.trim() ? 'Creating…' : '+ Create Meeting'}
+        </button>
+
+        {/* Invite link (shown after creating) */}
+        {inviteLink && (
+          <div className="flex flex-col gap-2 w-full max-w-sm bg-slate-800 border border-slate-600 rounded-lg p-3">
+            <p className="text-xs text-slate-400">Share this link to invite others:</p>
+            <div className="flex gap-2 items-center">
+              <input
+                type="text"
+                readOnly
+                aria-label="Invite link"
+                value={inviteLink}
+                className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-xs font-mono focus:outline-none select-all"
+                onFocus={(e) => e.target.select()}
+              />
+              <button
+                className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 rounded text-white text-xs whitespace-nowrap"
+                onClick={copyInviteLink}
+              >
+                {copied ? '✓ Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Divider */}
+        <div className="flex items-center w-full max-w-sm gap-3">
+          <div className="flex-1 h-px bg-slate-700" />
+          <span className="text-slate-500 text-xs">or join an existing meeting</span>
+          <div className="flex-1 h-px bg-slate-700" />
+        </div>
+
+        {/* Join existing */}
         <div className="flex gap-2 w-full max-w-sm">
           <input
             type="text"
@@ -200,7 +270,7 @@ function RealtimeMeeting() {
             disabled={!manualMeetingId.trim() || joining}
             onClick={() => joinByMeetingId(manualMeetingId.trim())}
           >
-            {joining ? 'Joining…' : 'Join'}
+            {joining && manualMeetingId.trim() ? 'Joining…' : 'Join'}
           </button>
         </div>
       </div>
