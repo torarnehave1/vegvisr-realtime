@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useReducer, createContext, useContext } from 'react';
+import React, { useState, useEffect, useReducer, useCallback, createContext, useContext } from 'react';
 import {
   RealtimeKitProvider,
   useRealtimeKitClient,
@@ -52,6 +52,39 @@ function Meeting() {
     { meeting: 'joined', activeSidebar: false },
   );
 
+  const [recordingState, setRecordingState] = useState<string>('IDLE');
+  const [recordingBusy, setRecordingBusy] = useState(false);
+
+  // Subscribe to recording state changes
+  useEffect(() => {
+    if (!meeting?.recording) return;
+    const rec = meeting.recording;
+    setRecordingState(rec.recordingState);
+    const handler = (state: string) => setRecordingState(state);
+    rec.on('recordingUpdate', handler);
+    return () => { rec.removeListener('recordingUpdate', handler); };
+  }, [meeting]);
+
+  const isRecording = recordingState === 'RECORDING';
+  const isStarting = recordingState === 'STARTING';
+  const isStopping = recordingState === 'STOPPING';
+
+  const toggleRecording = useCallback(async () => {
+    if (!meeting?.recording) return;
+    setRecordingBusy(true);
+    try {
+      if (isRecording) {
+        await meeting.recording.stop();
+      } else {
+        await meeting.recording.start();
+      }
+    } catch (err: any) {
+      console.error('Recording error:', err);
+    } finally {
+      setRecordingBusy(false);
+    }
+  }, [meeting, isRecording]);
+
   if (!meeting) return <RtkSpinner />;
   if (roomState === 'ended' || roomState === 'left') return <RtkEndedScreen />;
   if (!roomJoined) return <RtkSetupScreen meeting={meeting} />;
@@ -63,6 +96,15 @@ function Meeting() {
         el?.addEventListener('rtkStateUpdate', (e: any) => updateStates(e.detail));
       }}
     >
+      {/* Recording warning banner */}
+      {(isRecording || isStarting) && (
+        <div className="flex items-center justify-center gap-2 px-3 py-2 bg-red-700 text-white text-sm font-medium animate-pulse">
+          <span className="inline-block w-3 h-3 rounded-full bg-red-300 animate-ping" />
+          <span>
+            {isStarting ? 'Recording starting…' : '⏺ This meeting is being recorded'}
+          </span>
+        </div>
+      )}
       <header className="flex items-center gap-3 h-12 border-b border-slate-700 w-full px-2 text-sm text-slate-200">
         <RtkLogo meeting={meeting} />
         <RtkMeetingTitle meeting={meeting} />
@@ -80,6 +122,19 @@ function Meeting() {
           <RtkCameraToggle meeting={meeting} />
           <RtkScreenShareToggle meeting={meeting} />
           <RtkChatToggle meeting={meeting} />
+          {/* Record button */}
+          <button
+            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
+              isRecording
+                ? 'bg-red-600 hover:bg-red-500 text-white'
+                : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+            }`}
+            disabled={recordingBusy || isStarting || isStopping}
+            onClick={toggleRecording}
+            title={isRecording ? 'Stop recording' : 'Start recording'}
+          >
+            {isStarting ? '⏳ Starting…' : isStopping ? '⏳ Stopping…' : isRecording ? '⏹ Stop Rec' : '⏺ Record'}
+          </button>
         </div>
         <div className="flex flex-1" />
       </footer>
@@ -98,6 +153,8 @@ function RealtimeMeeting() {
   const [pastMeetings, setPastMeetings] = useState<any[]>([]);
   const [loadingMeetings, setLoadingMeetings] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [myRooms, setMyRooms] = useState<{ personalMeetingId: string | null; teamMeetingId: string | null }>({ personalMeetingId: null, teamMeetingId: null });
+  const [provisioningRooms, setProvisioningRooms] = useState(false);
   const [displayName, setDisplayName] = useState(() => {
     const stored = readStoredUser();
     if (!stored?.email) return '';
@@ -183,6 +240,41 @@ function RealtimeMeeting() {
     });
   };
 
+  const fetchMyRooms = async () => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/my-rooms', {
+        headers: { 'X-API-Token': stored.emailVerificationToken },
+      });
+      const data = await r.json();
+      if (data.success) {
+        setMyRooms({ personalMeetingId: data.personalMeetingId, teamMeetingId: data.teamMeetingId });
+      }
+    } catch { /* ignore */ }
+  };
+
+  const provisionRooms = async () => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    setProvisioningRooms(true);
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/provision-rooms', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Token': stored.emailVerificationToken,
+        },
+        body: JSON.stringify({}),
+      });
+      const data = await r.json();
+      if (data.success) {
+        setMyRooms({ personalMeetingId: data.personalMeetingId, teamMeetingId: data.teamMeetingId });
+      }
+    } catch { /* ignore */ }
+    finally { setProvisioningRooms(false); }
+  };
+
   const fetchMeetings = async () => {
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) return;
@@ -264,6 +356,7 @@ function RealtimeMeeting() {
 
     // No params — show the lobby
     setNoParams(true);
+    fetchMyRooms();
   }, []);
 
   if (tokenError) {
@@ -299,6 +392,46 @@ function RealtimeMeeting() {
             onChange={(e) => setDisplayName(e.target.value)}
           />
         </div>
+
+        {/* Permanent Rooms */}
+        {(myRooms.personalMeetingId || myRooms.teamMeetingId) ? (
+          <div className="flex gap-2 w-full max-w-sm">
+            {myRooms.personalMeetingId && (
+              <button
+                className="flex-1 px-4 py-3 bg-violet-700 hover:bg-violet-600 rounded-lg text-white font-medium disabled:opacity-40"
+                disabled={joining}
+                onClick={() => {
+                  setInviteLink(`${window.location.origin}/?meetingId=${myRooms.personalMeetingId}`);
+                  setCopied(false);
+                  fetchTokenAndJoin(myRooms.personalMeetingId!, 'group_call_host');
+                }}
+              >
+                {joining ? 'Joining…' : '🏠 My Room'}
+              </button>
+            )}
+            {myRooms.teamMeetingId && (
+              <button
+                className="flex-1 px-4 py-3 bg-indigo-700 hover:bg-indigo-600 rounded-lg text-white font-medium disabled:opacity-40"
+                disabled={joining}
+                onClick={() => {
+                  setInviteLink(`${window.location.origin}/?meetingId=${myRooms.teamMeetingId}`);
+                  setCopied(false);
+                  fetchTokenAndJoin(myRooms.teamMeetingId!, 'group_call_host');
+                }}
+              >
+                {joining ? 'Joining…' : '👥 Team Room'}
+              </button>
+            )}
+          </div>
+        ) : (
+          <button
+            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-white text-sm w-full max-w-sm disabled:opacity-40"
+            disabled={provisioningRooms}
+            onClick={provisionRooms}
+          >
+            {provisioningRooms ? 'Setting up…' : '🔧 Set Up My Permanent Rooms'}
+          </button>
+        )}
 
         {/* Create Meeting */}
         <button
