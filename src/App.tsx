@@ -289,13 +289,13 @@ function RealtimeMeeting() {
     finally { setLoadingMeetings(false); }
   };
 
-  const deleteMeeting = async (meetingId: string) => {
+  const closeMeeting = async (meetingId: string) => {
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) return;
     setDeletingId(meetingId);
     try {
-      const r = await fetch('https://api.vegvisr.org/realtime/delete-meeting', {
-        method: 'DELETE',
+      const r = await fetch('https://api.vegvisr.org/realtime/close-meeting', {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-API-Token': stored.emailVerificationToken,
@@ -304,7 +304,9 @@ function RealtimeMeeting() {
       });
       const data = await r.json();
       if (data.success) {
-        setPastMeetings((prev) => prev.filter((m) => m.id !== meetingId));
+        setPastMeetings((prev) =>
+          prev.map((m) => m.id === meetingId ? { ...m, status: 'INACTIVE' } : m)
+        );
       }
     } catch { /* ignore */ }
     finally { setDeletingId(null); }
@@ -510,26 +512,37 @@ function RealtimeMeeting() {
           {pastMeetings.length > 0 && (
             <div className="mt-3 flex flex-col gap-2 max-h-60 overflow-y-auto">
               {pastMeetings.map((m: any) => (
-                <div key={m.id} className="flex items-center gap-2 bg-slate-800 border border-slate-700 rounded px-3 py-2">
+                <div key={m.id} className={`flex items-center gap-2 rounded px-3 py-2 border ${
+                  m.status === 'INACTIVE' ? 'bg-slate-900 border-slate-800 opacity-60' : 'bg-slate-800 border-slate-700'
+                }`}>
                   <div className="flex-1 min-w-0">
                     <p className="text-white text-xs font-mono truncate">{m.id}</p>
-                    {m.title && <p className="text-slate-400 text-xs">{m.title}</p>}
+                    <div className="flex items-center gap-2">
+                      {m.title && <span className="text-slate-400 text-xs">{m.title}</span>}
+                      <span className={`text-xs ${m.status === 'INACTIVE' ? 'text-red-400' : 'text-green-400'}`}>
+                        {m.status === 'INACTIVE' ? '● Closed' : '● Active'}
+                      </span>
+                    </div>
                     {m.created_at && <p className="text-slate-500 text-xs">{new Date(m.created_at).toLocaleString()}</p>}
                   </div>
-                  <button
-                    className="px-2 py-1 bg-sky-700 hover:bg-sky-600 rounded text-white text-xs whitespace-nowrap"
-                    onClick={() => joinByMeetingId(m.id)}
-                    disabled={joining}
-                  >
-                    Join
-                  </button>
-                  <button
-                    className="px-2 py-1 bg-red-700 hover:bg-red-600 rounded text-white text-xs whitespace-nowrap disabled:opacity-40"
-                    onClick={() => deleteMeeting(m.id)}
-                    disabled={deletingId === m.id}
-                  >
-                    {deletingId === m.id ? '…' : '✕'}
-                  </button>
+                  {m.status !== 'INACTIVE' && (
+                    <button
+                      className="px-2 py-1 bg-sky-700 hover:bg-sky-600 rounded text-white text-xs whitespace-nowrap"
+                      onClick={() => joinByMeetingId(m.id)}
+                      disabled={joining}
+                    >
+                      Join
+                    </button>
+                  )}
+                  {m.status !== 'INACTIVE' && (
+                    <button
+                      className="px-2 py-1 bg-red-700 hover:bg-red-600 rounded text-white text-xs whitespace-nowrap disabled:opacity-40"
+                      onClick={() => closeMeeting(m.id)}
+                      disabled={deletingId === m.id}
+                    >
+                      {deletingId === m.id ? '…' : 'Close'}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
