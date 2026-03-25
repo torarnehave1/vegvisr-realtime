@@ -134,11 +134,36 @@ function RealtimeMeeting() {
   const joinByMeetingId = (id: string) => fetchTokenAndJoin(id);
 
   const createMeeting = async () => {
-    const newId = crypto.randomUUID();
-    const link = `${window.location.origin}/?meetingId=${newId}`;
-    setInviteLink(link);
-    setCopied(false);
-    await fetchTokenAndJoin(newId, 'group_call_host');
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) {
+      setTokenError('You must be logged in to create a meeting.');
+      return;
+    }
+    setJoining(true);
+    try {
+      // 1. Create meeting via Cloudflare RealtimeKit API
+      const createRes = await fetch('https://api.vegvisr.org/realtime/create-meeting', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Token': stored.emailVerificationToken,
+        },
+        body: JSON.stringify({}),
+      });
+      const createData = await createRes.json();
+      if (!createData.meetingId) throw new Error(createData.error || 'Failed to create meeting');
+
+      const newId = createData.meetingId;
+      const link = `${window.location.origin}/?meetingId=${newId}`;
+      setInviteLink(link);
+      setCopied(false);
+
+      // 2. Join as host
+      await fetchTokenAndJoin(newId, 'group_call_host');
+    } catch (err: any) {
+      setTokenError(err.message);
+      setJoining(false);
+    }
   };
 
   const copyInviteLink = () => {
