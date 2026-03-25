@@ -3,6 +3,7 @@ export type AuthUser = {
   email: string;
   role?: string | null;
   emailVerificationToken?: string | null;
+  displayName?: string | null;
 };
 
 export const readStoredUser = (): AuthUser | null => {
@@ -19,6 +20,7 @@ export const readStoredUser = (): AuthUser | null => {
       email,
       role: parsed.role || null,
       emailVerificationToken: parsed.emailVerificationToken || null,
+      displayName: parsed.displayName || parsed.display_name || null,
     };
   } catch {
     return null;

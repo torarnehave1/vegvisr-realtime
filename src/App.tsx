@@ -155,9 +155,15 @@ function RealtimeMeeting() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [myRooms, setMyRooms] = useState<{ personalMeetingId: string | null; teamMeetingId: string | null }>({ personalMeetingId: null, teamMeetingId: null });
   const [provisioningRooms, setProvisioningRooms] = useState(false);
+  const [editingRoomTitle, setEditingRoomTitle] = useState<'personal' | 'team' | null>(null);
+  const [roomTitleDraft, setRoomTitleDraft] = useState('');
+  const [savingTitle, setSavingTitle] = useState(false);
+  const [personalRoomTitle, setPersonalRoomTitle] = useState<string | null>(null);
+  const [teamRoomTitle, setTeamRoomTitle] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState(() => {
     const stored = readStoredUser();
     if (!stored?.email) return '';
+    if (stored.displayName) return stored.displayName;
     return stored.email.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   });
 
@@ -250,6 +256,21 @@ function RealtimeMeeting() {
       const data = await r.json();
       if (data.success) {
         setMyRooms({ personalMeetingId: data.personalMeetingId, teamMeetingId: data.teamMeetingId });
+        if (data.personalTitle) setPersonalRoomTitle(data.personalTitle);
+        if (data.teamTitle) setTeamRoomTitle(data.teamTitle);
+        // Update display name from config table if available
+        if (data.displayName && !stored.displayName) {
+          setDisplayName(data.displayName);
+          // Persist to localStorage
+          try {
+            const raw = localStorage.getItem('user');
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              parsed.displayName = data.displayName;
+              localStorage.setItem('user', JSON.stringify(parsed));
+            }
+          } catch { /* ignore */ }
+        }
       }
     } catch { /* ignore */ }
   };
@@ -265,7 +286,7 @@ function RealtimeMeeting() {
           'Content-Type': 'application/json',
           'X-API-Token': stored.emailVerificationToken,
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ displayName: displayName.trim() || undefined }),
       });
       const data = await r.json();
       if (data.success) {
@@ -310,6 +331,31 @@ function RealtimeMeeting() {
       }
     } catch { /* ignore */ }
     finally { setDeletingId(null); }
+  };
+
+  const renameRoom = async (meetingId: string, title: string) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    setSavingTitle(true);
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/rename-room', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Token': stored.emailVerificationToken,
+        },
+        body: JSON.stringify({ meetingId, title }),
+      });
+      const data = await r.json();
+      if (data.success) {
+        if (meetingId === myRooms.personalMeetingId) setPersonalRoomTitle(data.title);
+        if (meetingId === myRooms.teamMeetingId) setTeamRoomTitle(data.title);
+      }
+    } catch { /* ignore */ }
+    finally {
+      setSavingTitle(false);
+      setEditingRoomTitle(null);
+    }
   };
 
   useEffect(() => {
@@ -397,32 +443,110 @@ function RealtimeMeeting() {
 
         {/* Permanent Rooms */}
         {(myRooms.personalMeetingId || myRooms.teamMeetingId) ? (
-          <div className="flex gap-2 w-full max-w-sm">
+          <div className="flex flex-col gap-2 w-full max-w-sm">
             {myRooms.personalMeetingId && (
-              <button
-                className="flex-1 px-4 py-3 bg-violet-700 hover:bg-violet-600 rounded-lg text-white font-medium disabled:opacity-40"
-                disabled={joining}
-                onClick={() => {
-                  setInviteLink(`${window.location.origin}/?meetingId=${myRooms.personalMeetingId}`);
-                  setCopied(false);
-                  fetchTokenAndJoin(myRooms.personalMeetingId!, 'group_call_host');
-                }}
-              >
-                {joining ? 'Joining…' : '🏠 My Room'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  className="flex-1 px-4 py-3 bg-violet-700 hover:bg-violet-600 rounded-lg text-white font-medium disabled:opacity-40 text-left"
+                  disabled={joining}
+                  onClick={() => {
+                    setInviteLink(`${window.location.origin}/?meetingId=${myRooms.personalMeetingId}`);
+                    setCopied(false);
+                    fetchTokenAndJoin(myRooms.personalMeetingId!, 'group_call_host');
+                  }}
+                >
+                  <span className="block text-sm">{joining ? 'Joining…' : '🏠 My Room'}</span>
+                  {personalRoomTitle && <span className="block text-xs text-violet-200 mt-0.5">{personalRoomTitle}</span>}
+                </button>
+                <button
+                  className="px-2 py-2 text-slate-400 hover:text-white text-sm"
+                  title="Rename room"
+                  onClick={() => {
+                    setEditingRoomTitle('personal');
+                    setRoomTitleDraft(personalRoomTitle || '');
+                  }}
+                >
+                  ✏️
+                </button>
+              </div>
+            )}
+            {editingRoomTitle === 'personal' && myRooms.personalMeetingId && (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-sky-500"
+                  placeholder="Room title"
+                  value={roomTitleDraft}
+                  onChange={(e) => setRoomTitleDraft(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && roomTitleDraft.trim() && renameRoom(myRooms.personalMeetingId!, roomTitleDraft.trim())}
+                  autoFocus
+                />
+                <button
+                  className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 rounded text-white text-xs disabled:opacity-40"
+                  disabled={savingTitle || !roomTitleDraft.trim()}
+                  onClick={() => renameRoom(myRooms.personalMeetingId!, roomTitleDraft.trim())}
+                >
+                  {savingTitle ? '…' : 'Save'}
+                </button>
+                <button
+                  className="px-2 py-1.5 text-slate-500 hover:text-white text-xs"
+                  onClick={() => setEditingRoomTitle(null)}
+                >
+                  ✕
+                </button>
+              </div>
             )}
             {myRooms.teamMeetingId && (
-              <button
-                className="flex-1 px-4 py-3 bg-indigo-700 hover:bg-indigo-600 rounded-lg text-white font-medium disabled:opacity-40"
-                disabled={joining}
-                onClick={() => {
-                  setInviteLink(`${window.location.origin}/?meetingId=${myRooms.teamMeetingId}`);
-                  setCopied(false);
-                  fetchTokenAndJoin(myRooms.teamMeetingId!, 'group_call_host');
-                }}
-              >
-                {joining ? 'Joining…' : '👥 Team Room'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  className="flex-1 px-4 py-3 bg-indigo-700 hover:bg-indigo-600 rounded-lg text-white font-medium disabled:opacity-40 text-left"
+                  disabled={joining}
+                  onClick={() => {
+                    setInviteLink(`${window.location.origin}/?meetingId=${myRooms.teamMeetingId}`);
+                    setCopied(false);
+                    fetchTokenAndJoin(myRooms.teamMeetingId!, 'group_call_host');
+                  }}
+                >
+                  <span className="block text-sm">{joining ? 'Joining…' : '👥 Team Room'}</span>
+                  {teamRoomTitle && <span className="block text-xs text-indigo-200 mt-0.5">{teamRoomTitle}</span>}
+                </button>
+                <button
+                  className="px-2 py-2 text-slate-400 hover:text-white text-sm"
+                  title="Rename room"
+                  onClick={() => {
+                    setEditingRoomTitle('team');
+                    setRoomTitleDraft(teamRoomTitle || '');
+                  }}
+                >
+                  ✏️
+                </button>
+              </div>
+            )}
+            {editingRoomTitle === 'team' && myRooms.teamMeetingId && (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-sky-500"
+                  placeholder="Room title"
+                  value={roomTitleDraft}
+                  onChange={(e) => setRoomTitleDraft(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && roomTitleDraft.trim() && renameRoom(myRooms.teamMeetingId!, roomTitleDraft.trim())}
+                  autoFocus
+                />
+                <button
+                  className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 rounded text-white text-xs disabled:opacity-40"
+                  disabled={savingTitle || !roomTitleDraft.trim()}
+                  onClick={() => renameRoom(myRooms.teamMeetingId!, roomTitleDraft.trim())}
+                >
+                  {savingTitle ? '…' : 'Save'}
+                </button>
+                <button
+                  className="px-2 py-1.5 text-slate-500 hover:text-white text-xs"
+                  onClick={() => setEditingRoomTitle(null)}
+                >
+                  ✕
+                </button>
+              </div>
             )}
           </div>
         ) : (
@@ -613,6 +737,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     user_id: string | null;
     emailVerificationToken: string | null;
     oauth_id?: string | null;
+    displayName?: string | null;
   }) => {
     const payload = {
       email: user.email,
@@ -620,6 +745,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       user_id: user.user_id,
       oauth_id: user.oauth_id || user.user_id || null,
       emailVerificationToken: user.emailVerificationToken,
+      displayName: user.displayName || null,
     };
     localStorage.setItem('user', JSON.stringify(payload));
     if (user.emailVerificationToken) setAuthCookie(user.emailVerificationToken);
@@ -628,6 +754,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       userId: payload.user_id || payload.oauth_id || '',
       email: payload.email,
       role: payload.role || null,
+      displayName: payload.displayName,
     });
   };
 
