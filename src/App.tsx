@@ -303,13 +303,43 @@ function RealtimeMeeting() {
   }
 
   return (
-    <RealtimeKitProvider value={meeting}>
-      <RtkUiProvider meeting={meeting} showSetupScreen>
-        <Meeting />
-        <RtkDialogManager />
-        <RtkParticipantsAudio />
-      </RtkUiProvider>
-    </RealtimeKitProvider>
+    <div className="flex flex-col w-full h-full">
+      {inviteLink && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-slate-800 border-b border-slate-700 text-sm">
+          <span className="text-slate-400 text-xs whitespace-nowrap">Invite link:</span>
+          <input
+            type="text"
+            readOnly
+            aria-label="Invite link"
+            value={inviteLink}
+            className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-xs font-mono focus:outline-none select-all min-w-0"
+            onFocus={(e) => e.target.select()}
+          />
+          <button
+            className="px-3 py-1 bg-sky-600 hover:bg-sky-500 rounded text-white text-xs whitespace-nowrap"
+            onClick={copyInviteLink}
+          >
+            {copied ? '✓ Copied' : 'Copy'}
+          </button>
+          <button
+            className="px-2 py-1 text-slate-500 hover:text-white text-xs"
+            onClick={() => setInviteLink(null)}
+            title="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+      <div className="flex-1 min-h-0">
+        <RealtimeKitProvider value={meeting}>
+          <RtkUiProvider meeting={meeting} showSetupScreen>
+            <Meeting />
+            <RtkDialogManager />
+            <RtkParticipantsAudio />
+          </RtkUiProvider>
+        </RealtimeKitProvider>
+      </div>
+    </div>
   );
 }
 
