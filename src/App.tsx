@@ -92,28 +92,33 @@ function RealtimeMeeting() {
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [noParams, setNoParams] = useState(false);
   const [manualMeetingId, setManualMeetingId] = useState('');
+  const [joining, setJoining] = useState(false);
 
-  const joinByMeetingId = (id: string) => {
+  const joinByMeetingId = async (id: string) => {
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) {
       setTokenError('You must be logged in to join this meeting.');
       return;
     }
-    fetch('https://api.vegvisr.org/realtime/join-token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Token': stored.emailVerificationToken,
-      },
-      body: JSON.stringify({ meetingId: id, clientData: stored.email }),
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (!data.authToken) throw new Error(data.error || 'No token returned from server');
-        initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
-        setNoParams(false);
-      })
-      .catch((err) => setTokenError(err.message));
+    setJoining(true);
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/join-token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Token': stored.emailVerificationToken,
+        },
+        body: JSON.stringify({ meetingId: id, clientData: stored.email }),
+      });
+      const data = await r.json();
+      if (!data.authToken) throw new Error(data.error || 'No token returned from server');
+      await initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
+      setNoParams(false);
+    } catch (err: any) {
+      setTokenError(err.message);
+    } finally {
+      setJoining(false);
+    }
   };
 
   useEffect(() => {
@@ -125,7 +130,8 @@ function RealtimeMeeting() {
 
     // Direct token in URL — use it immediately (legacy / invite link flow)
     if (authToken) {
-      initMeeting({ authToken, defaults: { audio: false, video: false } });
+      initMeeting({ authToken, defaults: { audio: false, video: false } })
+        .catch((err: any) => setTokenError(err.message));
       return;
     }
 
@@ -147,9 +153,9 @@ function RealtimeMeeting() {
         body: JSON.stringify({ meetingId, clientData: stored.email }),
       })
         .then((r) => r.json())
-        .then((data) => {
+        .then(async (data) => {
           if (!data.authToken) throw new Error(data.error || 'No token returned from server');
-          initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
+          await initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
         })
         .catch((err) => setTokenError(err.message));
       return;
@@ -187,14 +193,14 @@ function RealtimeMeeting() {
             placeholder="Meeting ID"
             value={manualMeetingId}
             onChange={(e) => setManualMeetingId(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && manualMeetingId.trim() && joinByMeetingId(manualMeetingId.trim())}
+            onKeyDown={(e) => e.key === 'Enter' && manualMeetingId.trim() && !joining && joinByMeetingId(manualMeetingId.trim())}
           />
           <button
             className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded text-white text-sm disabled:opacity-40"
-            disabled={!manualMeetingId.trim()}
+            disabled={!manualMeetingId.trim() || joining}
             onClick={() => joinByMeetingId(manualMeetingId.trim())}
           >
-            Join
+            {joining ? 'Joining…' : 'Join'}
           </button>
         </div>
       </div>
