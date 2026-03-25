@@ -90,6 +90,31 @@ function Meeting() {
 function RealtimeMeeting() {
   const [meeting, initMeeting] = useRealtimeKitClient();
   const [tokenError, setTokenError] = useState<string | null>(null);
+  const [noParams, setNoParams] = useState(false);
+  const [manualMeetingId, setManualMeetingId] = useState('');
+
+  const joinByMeetingId = (id: string) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) {
+      setTokenError('You must be logged in to join this meeting.');
+      return;
+    }
+    fetch('https://api.vegvisr.org/realtime/join-token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Token': stored.emailVerificationToken,
+      },
+      body: JSON.stringify({ meetingId: id, clientData: stored.email }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data.authToken) throw new Error(data.error || 'No token returned from server');
+        initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
+        setNoParams(false);
+      })
+      .catch((err) => setTokenError(err.message));
+  };
 
   useEffect(() => {
     const searchParams = new URL(window.location.href).searchParams;
@@ -127,13 +152,51 @@ function RealtimeMeeting() {
           initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
         })
         .catch((err) => setTokenError(err.message));
+      return;
     }
+
+    // No params — show the lobby
+    setNoParams(true);
   }, []);
 
   if (tokenError) {
     return (
-      <div className="flex items-center justify-center h-full text-red-400 p-8 text-center">
-        {tokenError}
+      <div className="flex flex-col items-center justify-center h-full gap-6 p-8 text-center">
+        <p className="text-red-400">{tokenError}</p>
+        <button
+          className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded text-white text-sm"
+          onClick={() => setTokenError(null)}
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  if (noParams) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-6 p-8">
+        <div className="text-center mb-2">
+          <h1 className="text-2xl font-semibold text-white mb-1">Join a Meeting</h1>
+          <p className="text-slate-400 text-sm">Enter a meeting ID or use a meeting invite link.</p>
+        </div>
+        <div className="flex gap-2 w-full max-w-sm">
+          <input
+            type="text"
+            className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:border-sky-500"
+            placeholder="Meeting ID"
+            value={manualMeetingId}
+            onChange={(e) => setManualMeetingId(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && manualMeetingId.trim() && joinByMeetingId(manualMeetingId.trim())}
+          />
+          <button
+            className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded text-white text-sm disabled:opacity-40"
+            disabled={!manualMeetingId.trim()}
+            onClick={() => joinByMeetingId(manualMeetingId.trim())}
+          >
+            Join
+          </button>
+        </div>
       </div>
     );
   }
