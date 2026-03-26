@@ -298,6 +298,8 @@ function RealtimeMeeting() {
   const [renamingKey, setRenamingKey] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  const [transcribingKey, setTranscribingKey] = useState<string | null>(null);
+  const [transcripts, setTranscripts] = useState<Record<string, string>>({});
   const [displayName, setDisplayName] = useState(() => {
     const stored = readStoredUser();
     if (!stored?.email) return '';
@@ -563,6 +565,32 @@ function RealtimeMeeting() {
         `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(rec.key)}&token=${encodeURIComponent(stored.emailVerificationToken)}`,
         '_blank'
       );
+    }
+  };
+
+  const transcribeRecording = async (key: string) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    setTranscribingKey(key);
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/recordings/transcribe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Token': stored.emailVerificationToken,
+        },
+        body: JSON.stringify({ key }),
+      });
+      const data = await r.json();
+      if (data.success && data.text) {
+        setTranscripts(prev => ({ ...prev, [key]: data.text }));
+      } else {
+        setTranscripts(prev => ({ ...prev, [key]: `Error: ${data.error || data.details || 'Transcription failed'}` }));
+      }
+    } catch (err: any) {
+      setTranscripts(prev => ({ ...prev, [key]: `Error: ${err.message}` }));
+    } finally {
+      setTranscribingKey(null);
     }
   };
 
@@ -967,6 +995,16 @@ function RealtimeMeeting() {
                       >
                         ⬇
                       </button>
+                      {rec.source !== 'realtimekit' && (
+                        <button
+                          className="px-2 py-1 bg-purple-700 hover:bg-purple-600 rounded text-white text-xs whitespace-nowrap disabled:opacity-40"
+                          onClick={() => transcribeRecording(rec.key)}
+                          disabled={transcribingKey === rec.key}
+                          title="Transcribe with Whisper"
+                        >
+                          {transcribingKey === rec.key ? '⏳' : '📝'}
+                        </button>
+                      )}
                       {isSuperadmin && (
                         <>
                           <button
@@ -1010,6 +1048,20 @@ function RealtimeMeeting() {
                         >
                           ✕
                         </button>
+                      </div>
+                    )}
+                    {transcripts[rec.key] && (
+                      <div className="mt-1 bg-slate-900 border border-slate-700 rounded p-2">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-purple-400 text-xs font-medium">📝 Transcript</span>
+                          <button
+                            className="text-slate-500 hover:text-white text-xs"
+                            onClick={() => setTranscripts(prev => { const n = { ...prev }; delete n[rec.key]; return n; })}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        <p className="text-slate-300 text-xs whitespace-pre-wrap">{transcripts[rec.key]}</p>
                       </div>
                     )}
                   </div>
