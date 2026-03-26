@@ -420,13 +420,17 @@ function RealtimeMeeting() {
     finally { setDeletingKey(null); }
   };
 
-  const downloadRecording = (key: string) => {
+  const downloadRecording = (rec: any) => {
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) return;
-    window.open(
-      `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(key)}&token=${encodeURIComponent(stored.emailVerificationToken)}`,
-      '_blank'
-    );
+    if (rec.source === 'realtimekit' && rec.download_url) {
+      window.open(rec.download_url, '_blank');
+    } else {
+      window.open(
+        `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(rec.key)}&token=${encodeURIComponent(stored.emailVerificationToken)}`,
+        '_blank'
+      );
+    }
   };
 
   useEffect(() => {
@@ -772,14 +776,18 @@ function RealtimeMeeting() {
                     <div className="flex items-center gap-2">
                       <div className="flex-1 min-w-0">
                         <p className="text-white text-sm truncate" title={rec.name}>{rec.name}</p>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-slate-500 text-xs">{sizeStr}</span>
                           {rec.uploaded && <span className="text-slate-500 text-xs">{new Date(rec.uploaded).toLocaleString()}</span>}
+                          {rec.duration != null && <span className="text-slate-500 text-xs">{rec.duration.toFixed(1)}s</span>}
+                          {rec.meetingTitle && <span className="text-slate-400 text-xs">📹 {rec.meetingTitle}</span>}
+                          {rec.source === 'realtimekit' && <span className="text-amber-400 text-xs">☁️ cloud</span>}
+                          {rec.error && <span className="text-red-400 text-xs" title={rec.error}>⚠️ R2 failed</span>}
                         </div>
                       </div>
                       <button
                         className="px-2 py-1 bg-sky-700 hover:bg-sky-600 rounded text-white text-xs whitespace-nowrap"
-                        onClick={() => downloadRecording(rec.key)}
+                        onClick={() => downloadRecording(rec)}
                         title="Download"
                       >
                         ⬇
