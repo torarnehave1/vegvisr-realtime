@@ -545,7 +545,13 @@ function RealtimeMeeting() {
 
   if (noParams) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-6 p-8">
+      <div className="flex flex-col h-full">
+        {/* Top bar with logo */}
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-700">
+          <img src="https://favicons.vegvisr.org/favicons/1774517083754-1-1774517088217-32x32.png" alt="Vegvisr" className="w-8 h-8" />
+          <span className="text-white font-semibold tracking-widest text-sm">REALTIME</span>
+        </div>
+        <div className="flex flex-col items-center justify-center flex-1 gap-6 p-8">
         <div className="text-center mb-2">
           <h1 className="text-2xl font-semibold text-white mb-1">Meetings</h1>
           <p className="text-slate-400 text-sm">Create a new meeting or join an existing one.</p>
@@ -900,6 +906,7 @@ function RealtimeMeeting() {
             </div>
           )}
         </div>
+      </div>
       </div>
     );
   }
