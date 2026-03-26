@@ -48,6 +48,7 @@ function Meeting() {
   const { meeting } = useRealtimeKitMeeting();
   const roomJoined = useRealtimeKitSelector((m) => m.self.roomJoined);
   const roomState = useRealtimeKitSelector((m) => m.self.roomState);
+  const canRecord = useRealtimeKitSelector((m) => m.self.permissions.canRecord);
 
   const [states, updateStates] = useReducer(
     (state: any, payload: any) => ({ ...state, ...payload }),
@@ -125,19 +126,21 @@ function Meeting() {
           <RtkScreenShareToggle meeting={meeting} />
           <RtkChatToggle meeting={meeting} />
           <RtkSettingsToggle />
-          {/* Record button */}
-          <button
-            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
-              isRecording
-                ? 'bg-red-600 hover:bg-red-500 text-white'
-                : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
-            }`}
-            disabled={recordingBusy || isStarting || isStopping}
-            onClick={toggleRecording}
-            title={isRecording ? 'Stop recording' : 'Start recording'}
-          >
-            {isStarting ? '⏳ Starting…' : isStopping ? '⏳ Stopping…' : isRecording ? '⏹ Stop Rec' : '⏺ Record'}
-          </button>
+          {/* Record button — only visible to hosts with canRecord permission */}
+          {canRecord && (
+            <button
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
+                isRecording
+                  ? 'bg-red-600 hover:bg-red-500 text-white'
+                  : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+              }`}
+              disabled={recordingBusy || isStarting || isStopping}
+              onClick={toggleRecording}
+              title={isRecording ? 'Stop recording' : 'Start recording'}
+            >
+              {isStarting ? '⏳ Starting…' : isStopping ? '⏳ Stopping…' : isRecording ? '⏹ Stop Rec' : '⏺ Record'}
+            </button>
+          )}
         </div>
         <div className="flex flex-1" />
       </footer>
