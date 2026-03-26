@@ -812,7 +812,7 @@ function RealtimeMeeting() {
       <div className="flex flex-col h-full">
         {/* Top bar with logo */}
         <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-700">
-          <img src="https://favicons.vegvisr.org/favicons/1774517083754-1-1774517088217-512x512.png" alt="Vegvisr Realtime" style={{ width: '200px', height: '200px' }} />
+          <img src="https://favicons.vegvisr.org/favicons/1774561024334-1-1774561031809-512x512.png" alt="Vegvisr Realtime" style={{ width: '200px', height: '200px' }} />
         </div>
 
         {/* Tab navigation */}
