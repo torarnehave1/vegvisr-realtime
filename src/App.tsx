@@ -18,6 +18,8 @@ import {
   RtkParticipantsAudio,
   RtkScreenShareToggle,
   RtkSetupScreen,
+  RtkSettings,
+  RtkSettingsToggle,
   RtkSidebar,
   RtkSpinner,
   RtkUiProvider,
@@ -122,6 +124,7 @@ function Meeting() {
           <RtkCameraToggle meeting={meeting} />
           <RtkScreenShareToggle meeting={meeting} />
           <RtkChatToggle meeting={meeting} />
+          <RtkSettingsToggle />
           {/* Record button */}
           <button
             className={`px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
@@ -162,6 +165,7 @@ function RealtimeMeeting() {
   const [teamRoomTitle, setTeamRoomTitle] = useState<string | null>(null);
   const [recordings, setRecordings] = useState<any[]>([]);
   const [loadingRecordings, setLoadingRecordings] = useState(false);
+  const [syncingRecordings, setSyncingRecordings] = useState(false);
   const [renamingKey, setRenamingKey] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
@@ -430,6 +434,33 @@ function RealtimeMeeting() {
         `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(rec.key)}&token=${encodeURIComponent(stored.emailVerificationToken)}`,
         '_blank'
       );
+    }
+  };
+
+  const syncRecordingsToR2 = async () => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    setSyncingRecordings(true);
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/recordings/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Token': stored.emailVerificationToken,
+        },
+        body: JSON.stringify({}),
+      });
+      const data = await r.json();
+      if (data.success) {
+        alert(`Synced ${data.synced} recording(s) to R2. ${data.skipped} already existed.`);
+        await fetchRecordings();
+      } else {
+        alert('Sync failed: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err: any) {
+      alert('Sync error: ' + err.message);
+    } finally {
+      setSyncingRecordings(false);
     }
   };
 
@@ -764,6 +795,16 @@ function RealtimeMeeting() {
             {loadingRecordings ? 'Loading…' : '🎬 Load Recordings'}
           </button>
 
+          {recordings.some((r: any) => r.source === 'realtimekit') && (
+            <button
+              className="px-4 py-2 bg-amber-700 hover:bg-amber-600 rounded text-white text-sm w-full disabled:opacity-40 mt-2"
+              disabled={syncingRecordings}
+              onClick={syncRecordingsToR2}
+            >
+              {syncingRecordings ? 'Syncing…' : '☁️→💾 Sync Cloud Recordings to R2'}
+            </button>
+          )}
+
           {recordings.length > 0 && (
             <div className="mt-3 flex flex-col gap-2 max-h-72 overflow-y-auto">
               {recordings.map((rec: any) => {
@@ -880,6 +921,7 @@ function RealtimeMeeting() {
           <RtkUiProvider meeting={meeting} showSetupScreen>
             <Meeting />
             <RtkDialogManager />
+            <RtkSettings />
             <RtkParticipantsAudio />
           </RtkUiProvider>
         </RealtimeKitProvider>
