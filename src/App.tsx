@@ -300,6 +300,7 @@ function RealtimeMeeting() {
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [transcribingKey, setTranscribingKey] = useState<string | null>(null);
   const [transcripts, setTranscripts] = useState<Record<string, string>>({});
+  const [transcribeProgress, setTranscribeProgress] = useState<{ current: number; total: number } | null>(null);
   const [displayName, setDisplayName] = useState(() => {
     const stored = readStoredUser();
     if (!stored?.email) return '';
@@ -568,29 +569,132 @@ function RealtimeMeeting() {
     }
   };
 
+  const CHUNK_DURATION_SECONDS = 120;
+  const WHISPER_ENDPOINT = 'https://openai.vegvisr.org/audio';
+
+  const audioBufferToWavBlob = (audioBuffer: AudioBuffer): Blob => {
+    const numberOfChannels = 1; // mono for speech
+    const sampleRate = 16000; // 16kHz for Whisper
+    const srcRate = audioBuffer.sampleRate;
+    const ratio = srcRate / sampleRate;
+    const newLength = Math.floor(audioBuffer.length / ratio);
+    const buffer = new ArrayBuffer(44 + newLength * 2);
+    const view = new DataView(buffer);
+    const writeStr = (off: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + newLength * 2, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numberOfChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, 'data');
+    view.setUint32(40, newLength * 2, true);
+    // Mix to mono + resample with linear interpolation
+    const ch0 = audioBuffer.getChannelData(0);
+    const ch1 = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : ch0;
+    let offset = 44;
+    for (let i = 0; i < newLength; i++) {
+      const srcIdx = i * ratio;
+      const idx = Math.floor(srcIdx);
+      const frac = srcIdx - idx;
+      const s0 = ((ch0[idx] || 0) + (ch1[idx] || 0)) / 2;
+      const s1 = ((ch0[Math.min(idx + 1, audioBuffer.length - 1)] || 0) + (ch1[Math.min(idx + 1, audioBuffer.length - 1)] || 0)) / 2;
+      const sample = Math.max(-1, Math.min(1, s0 + (s1 - s0) * frac));
+      view.setInt16(offset, sample * 0x7fff, true);
+      offset += 2;
+    }
+    return new Blob([buffer], { type: 'audio/wav' });
+  };
+
+  const fmtChunkTs = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
   const transcribeRecording = async (key: string) => {
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) return;
     setTranscribingKey(key);
+    setTranscribeProgress(null);
+    setTranscripts(prev => ({ ...prev, [key]: 'Downloading recording…' }));
     try {
-      const r = await fetch('https://api.vegvisr.org/realtime/recordings/transcribe', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Token': stored.emailVerificationToken,
-        },
-        body: JSON.stringify({ key }),
-      });
-      const data = await r.json();
-      if (data.success && data.text) {
-        setTranscripts(prev => ({ ...prev, [key]: data.text }));
-      } else {
-        setTranscripts(prev => ({ ...prev, [key]: `Error: ${data.error || data.details || 'Transcription failed'}` }));
+      // 1. Download the video/audio from R2 via the download endpoint
+      const downloadUrl = `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(key)}&token=${encodeURIComponent(stored.emailVerificationToken)}`;
+      const dlResp = await fetch(downloadUrl);
+      if (!dlResp.ok) throw new Error(`Download failed: ${dlResp.status} ${dlResp.statusText}`);
+      const arrayBuf = await dlResp.arrayBuffer();
+      const sizeMB = (arrayBuf.byteLength / 1024 / 1024).toFixed(1);
+      setTranscripts(prev => ({ ...prev, [key]: `Downloaded ${sizeMB} MB — decoding audio…` }));
+
+      // 2. Decode audio from the video using Web Audio API
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      let audioBuffer: AudioBuffer;
+      try {
+        audioBuffer = await audioCtx.decodeAudioData(arrayBuf);
+      } finally {
+        await audioCtx.close();
       }
+
+      // 3. Split into chunks
+      const chunkSamples = CHUNK_DURATION_SECONDS * audioBuffer.sampleRate;
+      const totalChunks = Math.max(Math.ceil(audioBuffer.length / chunkSamples), 1);
+      setTranscribeProgress({ current: 0, total: totalChunks });
+      setTranscripts(prev => ({ ...prev, [key]: `Transcribing ${totalChunks} chunk(s)…` }));
+
+      const segments: string[] = [];
+
+      for (let i = 0; i < totalChunks; i++) {
+        setTranscribeProgress({ current: i + 1, total: totalChunks });
+        const startSample = i * chunkSamples;
+        const endSample = Math.min(startSample + chunkSamples, audioBuffer.length);
+        const chunkLength = endSample - startSample;
+
+        // Create chunk AudioBuffer
+        const offCtx = new OfflineAudioContext(audioBuffer.numberOfChannels, chunkLength, audioBuffer.sampleRate);
+        const chunkBuf = offCtx.createBuffer(audioBuffer.numberOfChannels, chunkLength, audioBuffer.sampleRate);
+        for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+          const src = audioBuffer.getChannelData(ch);
+          const dst = chunkBuf.getChannelData(ch);
+          for (let s = 0; s < chunkLength; s++) dst[s] = src[startSample + s];
+        }
+
+        // Convert to mono 16kHz WAV
+        const wavBlob = audioBufferToWavBlob(chunkBuf);
+
+        // Send to Whisper endpoint (same as GrokChatPanel)
+        const formData = new FormData();
+        formData.append('file', wavBlob, `chunk_${i + 1}.wav`);
+        formData.append('model', 'whisper-1');
+
+        const whisperResp = await fetch(WHISPER_ENDPOINT, { method: 'POST', body: formData });
+        const whisperData = await whisperResp.json();
+        const chunkText = (whisperData.text || '').trim();
+        const startTime = startSample / audioBuffer.sampleRate;
+        const endTime = endSample / audioBuffer.sampleRate;
+        const label = `[${fmtChunkTs(startTime)} – ${fmtChunkTs(endTime)}]`;
+
+        if (chunkText) {
+          segments.push(`${label} ${chunkText}`);
+        } else {
+          segments.push(`${label} (no speech detected)`);
+        }
+
+        // Show partial results as they come in
+        setTranscripts(prev => ({ ...prev, [key]: segments.join('\n\n') }));
+      }
+
+      setTranscripts(prev => ({ ...prev, [key]: segments.join('\n\n') || 'No speech detected in recording.' }));
     } catch (err: any) {
       setTranscripts(prev => ({ ...prev, [key]: `Error: ${err.message}` }));
     } finally {
       setTranscribingKey(null);
+      setTranscribeProgress(null);
     }
   };
 
@@ -1002,7 +1106,9 @@ function RealtimeMeeting() {
                           disabled={transcribingKey === rec.key}
                           title="Transcribe with Whisper"
                         >
-                          {transcribingKey === rec.key ? '⏳' : '📝'}
+                          {transcribingKey === rec.key
+                            ? (transcribeProgress ? `${transcribeProgress.current}/${transcribeProgress.total}` : '⏳')
+                            : '📝'}
                         </button>
                       )}
                       {isSuperadmin && (
