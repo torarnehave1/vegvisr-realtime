@@ -301,6 +301,9 @@ function RealtimeMeeting() {
   const [transcribingKey, setTranscribingKey] = useState<string | null>(null);
   const [transcripts, setTranscripts] = useState<Record<string, string>>({});
   const [transcribeProgress, setTranscribeProgress] = useState<{ current: number; total: number } | null>(null);
+  const [lobbyTab, setLobbyTab] = useState<'meetings' | 'recordings'>('meetings');
+  const [playingKey, setPlayingKey] = useState<string | null>(null);
+  const [copiedTranscript, setCopiedTranscript] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState(() => {
     const stored = readStoredUser();
     if (!stored?.email) return '';
@@ -725,6 +728,22 @@ function RealtimeMeeting() {
     }
   };
 
+  const getVideoUrl = (rec: any): string | null => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return null;
+    if (rec.source === 'realtimekit' && rec.download_url) return rec.download_url;
+    return `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(rec.key)}&token=${encodeURIComponent(stored.emailVerificationToken)}`;
+  };
+
+  const copyTranscript = (key: string) => {
+    const text = transcripts[key];
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedTranscript(key);
+      setTimeout(() => setCopiedTranscript(null), 2000);
+    });
+  };
+
   useEffect(() => {
     const searchParams = new URL(window.location.href).searchParams;
     const authToken = searchParams.get('authToken');
@@ -795,7 +814,26 @@ function RealtimeMeeting() {
         <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-700">
           <img src="https://favicons.vegvisr.org/favicons/1774517083754-1-1774517088217-512x512.png" alt="Vegvisr Realtime" style={{ width: '200px', height: '200px' }} />
         </div>
-        <div className="flex flex-col items-center justify-center flex-1 gap-6 p-8">
+
+        {/* Tab navigation */}
+        <div className="flex border-b border-slate-700">
+          <button
+            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${lobbyTab === 'meetings' ? 'text-white border-b-2 border-sky-500 bg-slate-800/50' : 'text-slate-400 hover:text-white'}`}
+            onClick={() => setLobbyTab('meetings')}
+          >
+            📞 Meetings
+          </button>
+          <button
+            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${lobbyTab === 'recordings' ? 'text-white border-b-2 border-purple-500 bg-slate-800/50' : 'text-slate-400 hover:text-white'}`}
+            onClick={() => { setLobbyTab('recordings'); if (recordings.length === 0) fetchRecordings(); }}
+          >
+            🎬 Recordings {recordings.length > 0 && <span className="ml-1 text-xs bg-slate-700 rounded-full px-1.5">{recordings.length}</span>}
+          </button>
+        </div>
+
+        {/* ─── Meetings Tab ─── */}
+        {lobbyTab === 'meetings' && (
+        <div className="flex flex-col items-center justify-center flex-1 gap-6 p-8 overflow-y-auto">
         <div className="text-center mb-2">
           <h1 className="text-2xl font-semibold text-white mb-1">Meetings</h1>
           <p className="text-slate-400 text-sm">Create a new meeting or join an existing one.</p>
@@ -1044,139 +1082,222 @@ function RealtimeMeeting() {
             </div>
           )}
         </div>
-
-        {/* Recordings */}
-        <div className="flex items-center w-full max-w-sm gap-3 mt-2">
-          <div className="flex-1 h-px bg-slate-700" />
-          <span className="text-slate-500 text-xs">recordings</span>
-          <div className="flex-1 h-px bg-slate-700" />
         </div>
+        )}
 
-        <div className="w-full max-w-sm">
-          <button
-            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-white text-sm w-full disabled:opacity-40"
-            disabled={loadingRecordings}
-            onClick={fetchRecordings}
-          >
-            {loadingRecordings ? 'Loading…' : '🎬 Load Recordings'}
-          </button>
+        {/* ─── Recordings Tab ─── */}
+        {lobbyTab === 'recordings' && (
+        <div className="flex-1 overflow-y-auto p-4">
+          <div className="max-w-4xl mx-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h1 className="text-xl font-semibold text-white">Recordings</h1>
+                <p className="text-slate-400 text-sm">Play, transcribe and manage your meeting recordings.</p>
+              </div>
+              <div className="flex gap-2">
+                {recordings.some((r: any) => r.source === 'realtimekit') && (
+                  <button
+                    className="px-3 py-2 bg-amber-700 hover:bg-amber-600 rounded text-white text-xs disabled:opacity-40"
+                    disabled={syncingRecordings}
+                    onClick={syncRecordingsToR2}
+                  >
+                    {syncingRecordings ? 'Syncing…' : '☁️→💾 Sync to R2'}
+                  </button>
+                )}
+                <button
+                  className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-white text-xs disabled:opacity-40"
+                  disabled={loadingRecordings}
+                  onClick={fetchRecordings}
+                >
+                  {loadingRecordings ? 'Loading…' : '↻ Refresh'}
+                </button>
+              </div>
+            </div>
 
-          {recordings.some((r: any) => r.source === 'realtimekit') && (
-            <button
-              className="px-4 py-2 bg-amber-700 hover:bg-amber-600 rounded text-white text-sm w-full disabled:opacity-40 mt-2"
-              disabled={syncingRecordings}
-              onClick={syncRecordingsToR2}
-            >
-              {syncingRecordings ? 'Syncing…' : '☁️→💾 Sync Cloud Recordings to R2'}
-            </button>
-          )}
+            {recordings.length === 0 && !loadingRecordings && (
+              <div className="text-center py-16 text-slate-500">
+                <p className="text-4xl mb-3">🎬</p>
+                <p>No recordings yet. Record a meeting to see it here.</p>
+              </div>
+            )}
 
-          {recordings.length > 0 && (
-            <div className="mt-3 flex flex-col gap-2 max-h-72 overflow-y-auto">
+            {loadingRecordings && (
+              <div className="text-center py-16 text-slate-400">
+                <div className="w-6 h-6 border-2 border-sky-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                <p className="text-sm">Loading recordings…</p>
+              </div>
+            )}
+
+            <div className="grid gap-4">
               {recordings.map((rec: any) => {
                 const isSuperadmin = readStoredUser()?.role === 'Superadmin';
                 const sizeStr = rec.size > 1024 * 1024
                   ? `${(rec.size / (1024 * 1024)).toFixed(1)} MB`
                   : `${(rec.size / 1024).toFixed(0)} KB`;
+                const videoUrl = getVideoUrl(rec);
+                const isPlaying = playingKey === rec.key;
+                const isR2 = rec.source !== 'realtimekit';
+
                 return (
-                  <div key={rec.key} className="flex flex-col gap-1 bg-slate-800 border border-slate-700 rounded px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-white text-sm truncate" title={rec.name}>{rec.name}</p>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-slate-500 text-xs">{sizeStr}</span>
-                          {rec.uploaded && <span className="text-slate-500 text-xs">{new Date(rec.uploaded).toLocaleString()}</span>}
-                          {rec.duration != null && <span className="text-slate-500 text-xs">{rec.duration.toFixed(1)}s</span>}
-                          {rec.meetingTitle && <span className="text-slate-400 text-xs">📹 {rec.meetingTitle}</span>}
-                          {rec.source === 'realtimekit' && <span className="text-amber-400 text-xs">☁️ cloud</span>}
-                          {rec.error && <span className="text-red-400 text-xs" title={rec.error}>⚠️ R2 failed</span>}
-                        </div>
-                      </div>
-                      <button
-                        className="px-2 py-1 bg-sky-700 hover:bg-sky-600 rounded text-white text-xs whitespace-nowrap"
-                        onClick={() => downloadRecording(rec)}
-                        title="Download"
-                      >
-                        ⬇
-                      </button>
-                      {rec.source !== 'realtimekit' && (
+                  <div key={rec.key} className="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
+                    {/* Video player / thumbnail area */}
+                    <div className="relative bg-black">
+                      {isPlaying && videoUrl ? (
+                        <video
+                          className="w-full max-h-[400px]"
+                          src={videoUrl}
+                          controls
+                          autoPlay
+                          onEnded={() => setPlayingKey(null)}
+                        />
+                      ) : (
                         <button
-                          className="px-2 py-1 bg-purple-700 hover:bg-purple-600 rounded text-white text-xs whitespace-nowrap disabled:opacity-40"
-                          onClick={() => transcribeRecording(rec.key)}
-                          disabled={transcribingKey === rec.key}
-                          title="Transcribe with Whisper"
+                          className="w-full flex items-center justify-center py-12 bg-slate-900 hover:bg-slate-800 transition-colors group"
+                          onClick={() => setPlayingKey(rec.key)}
+                          title="Play recording"
                         >
-                          {transcribingKey === rec.key
-                            ? (transcribeProgress ? `${transcribeProgress.current}/${transcribeProgress.total}` : '⏳')
-                            : '📝'}
+                          <div className="flex flex-col items-center gap-2">
+                            <div className="w-14 h-14 rounded-full bg-white/10 group-hover:bg-white/20 flex items-center justify-center transition-colors">
+                              <span className="text-2xl ml-1">▶</span>
+                            </div>
+                            <span className="text-slate-400 text-xs group-hover:text-white transition-colors">Click to play</span>
+                          </div>
                         </button>
                       )}
-                      {isSuperadmin && (
-                        <>
-                          <button
-                            className="px-2 py-1 text-slate-400 hover:text-white text-xs"
-                            title="Rename"
-                            onClick={() => { setRenamingKey(rec.key); setRenameDraft(rec.name); }}
-                          >
-                            ✏️
-                          </button>
-                          <button
-                            className="px-2 py-1 bg-red-700 hover:bg-red-600 rounded text-white text-xs whitespace-nowrap disabled:opacity-40"
-                            onClick={() => deleteRecording(rec.key)}
-                            disabled={deletingKey === rec.key}
-                            title="Delete"
-                          >
-                            {deletingKey === rec.key ? '…' : '🗑'}
-                          </button>
-                        </>
+                      {rec.source === 'realtimekit' && (
+                        <div className="absolute top-2 right-2 bg-amber-600/80 rounded px-2 py-0.5 text-xs text-white">
+                          ☁️ cloud
+                        </div>
                       )}
                     </div>
-                    {renamingKey === rec.key && (
-                      <div className="flex gap-2 mt-1">
-                        <input
-                          type="text"
-                          className="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-xs focus:outline-none focus:border-sky-500"
-                          value={renameDraft}
-                          onChange={(e) => setRenameDraft(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && renameDraft.trim() && renameRecording(rec.key, renameDraft.trim())}
-                          autoFocus
-                        />
-                        <button
-                          className="px-2 py-1 bg-sky-600 hover:bg-sky-500 rounded text-white text-xs"
-                          onClick={() => renameRecording(rec.key, renameDraft.trim())}
-                          disabled={!renameDraft.trim()}
-                        >
-                          Save
-                        </button>
-                        <button
-                          className="px-2 py-1 text-slate-500 hover:text-white text-xs"
-                          onClick={() => setRenamingKey(null)}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    )}
-                    {transcripts[rec.key] && (
-                      <div className="mt-1 bg-slate-900 border border-slate-700 rounded p-2">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-purple-400 text-xs font-medium">📝 Transcript</span>
+
+                    {/* Recording info & actions */}
+                    <div className="p-3">
+                      <div className="flex items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-white text-sm font-medium truncate" title={rec.name}>{rec.name}</p>
+                          <div className="flex items-center gap-3 mt-1 flex-wrap">
+                            <span className="text-slate-500 text-xs">{sizeStr}</span>
+                            {rec.uploaded && <span className="text-slate-500 text-xs">{new Date(rec.uploaded).toLocaleString()}</span>}
+                            {rec.duration != null && <span className="text-slate-500 text-xs">{Math.floor(rec.duration / 60)}:{String(Math.floor(rec.duration % 60)).padStart(2, '0')}</span>}
+                            {rec.meetingTitle && <span className="text-slate-400 text-xs">📹 {rec.meetingTitle}</span>}
+                            {rec.error && <span className="text-red-400 text-xs" title={rec.error}>⚠️ R2 failed</span>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
                           <button
-                            className="text-slate-500 hover:text-white text-xs"
-                            onClick={() => setTranscripts(prev => { const n = { ...prev }; delete n[rec.key]; return n; })}
+                            className="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-white text-xs"
+                            onClick={() => setPlayingKey(isPlaying ? null : rec.key)}
+                            title={isPlaying ? 'Close player' : 'Play'}
+                          >
+                            {isPlaying ? '⏹' : '▶'}
+                          </button>
+                          <button
+                            className="px-2.5 py-1.5 bg-sky-700 hover:bg-sky-600 rounded text-white text-xs"
+                            onClick={() => downloadRecording(rec)}
+                            title="Download"
+                          >
+                            ⬇
+                          </button>
+                          {isR2 && (
+                            <button
+                              className="px-2.5 py-1.5 bg-purple-700 hover:bg-purple-600 rounded text-white text-xs disabled:opacity-40"
+                              onClick={() => transcribeRecording(rec.key)}
+                              disabled={transcribingKey === rec.key}
+                              title="Transcribe with Whisper"
+                            >
+                              {transcribingKey === rec.key
+                                ? (transcribeProgress ? `⏳ ${transcribeProgress.current}/${transcribeProgress.total}` : '⏳')
+                                : '📝 Transcribe'}
+                            </button>
+                          )}
+                          {isSuperadmin && (
+                            <>
+                              <button
+                                className="px-2 py-1.5 text-slate-400 hover:text-white text-xs"
+                                title="Rename"
+                                onClick={() => { setRenamingKey(rec.key); setRenameDraft(rec.name); }}
+                              >
+                                ✏️
+                              </button>
+                              <button
+                                className="px-2 py-1.5 bg-red-700 hover:bg-red-600 rounded text-white text-xs disabled:opacity-40"
+                                onClick={() => deleteRecording(rec.key)}
+                                disabled={deletingKey === rec.key}
+                                title="Delete"
+                              >
+                                {deletingKey === rec.key ? '…' : '🗑'}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Rename inline */}
+                      {renamingKey === rec.key && (
+                        <div className="flex gap-2 mt-2">
+                          <input
+                            type="text"
+                            className="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-xs focus:outline-none focus:border-sky-500"
+                            value={renameDraft}
+                            onChange={(e) => setRenameDraft(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && renameDraft.trim() && renameRecording(rec.key, renameDraft.trim())}
+                            autoFocus
+                          />
+                          <button
+                            className="px-2 py-1 bg-sky-600 hover:bg-sky-500 rounded text-white text-xs"
+                            onClick={() => renameRecording(rec.key, renameDraft.trim())}
+                            disabled={!renameDraft.trim()}
+                          >
+                            Save
+                          </button>
+                          <button
+                            className="px-2 py-1 text-slate-500 hover:text-white text-xs"
+                            onClick={() => setRenamingKey(null)}
                           >
                             ✕
                           </button>
                         </div>
-                        <p className="text-slate-300 text-xs whitespace-pre-wrap">{transcripts[rec.key]}</p>
-                      </div>
-                    )}
+                      )}
+
+                      {/* Transcript area — large, copyable */}
+                      {transcripts[rec.key] && (
+                        <div className="mt-3 border border-slate-600 rounded-lg overflow-hidden">
+                          <div className="flex items-center justify-between bg-slate-700/50 px-3 py-2">
+                            <span className="text-purple-400 text-xs font-medium">📝 Transcript</span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                className="px-2 py-1 bg-slate-600 hover:bg-slate-500 rounded text-white text-xs"
+                                onClick={() => copyTranscript(rec.key)}
+                              >
+                                {copiedTranscript === rec.key ? '✓ Copied' : '📋 Copy'}
+                              </button>
+                              <button
+                                className="text-slate-400 hover:text-white text-xs px-1"
+                                onClick={() => setTranscripts(prev => { const n = { ...prev }; delete n[rec.key]; return n; })}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+                          <textarea
+                            className="w-full bg-slate-900 text-slate-200 text-sm p-3 resize-y focus:outline-none border-0"
+                            readOnly
+                            rows={Math.min(Math.max(transcripts[rec.key].split('\n').length + 1, 4), 20)}
+                            value={transcripts[rec.key]}
+                            onFocus={(e) => e.target.select()}
+                          />
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })}
             </div>
-          )}
+          </div>
         </div>
-      </div>
+        )}
+
       </div>
     );
   }
