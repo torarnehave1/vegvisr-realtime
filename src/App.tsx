@@ -56,6 +56,7 @@ function Meeting() {
 
   const [recordingState, setRecordingState] = useState<string>('IDLE');
   const [recordingBusy, setRecordingBusy] = useState(false);
+  const [showRecordingBanner, setShowRecordingBanner] = useState(false);
 
   // Subscribe to recording state changes
   useEffect(() => {
@@ -70,6 +71,16 @@ function Meeting() {
   const isRecording = recordingState === 'RECORDING';
   const isStarting = recordingState === 'STARTING';
   const isStopping = recordingState === 'STOPPING';
+
+  // Show banner briefly when recording starts
+  useEffect(() => {
+    if (isRecording || isStarting) {
+      setShowRecordingBanner(true);
+      const timer = setTimeout(() => setShowRecordingBanner(false), 3000);
+      return () => clearTimeout(timer);
+    }
+    setShowRecordingBanner(false);
+  }, [isRecording, isStarting]);
 
   const toggleRecording = useCallback(async () => {
     if (!meeting?.recording) return;
@@ -112,8 +123,8 @@ function Meeting() {
         el?.addEventListener('rtkStateUpdate', (e: any) => updateStates(e.detail));
       }}
     >
-      {/* Recording warning banner */}
-      {(isRecording || isStarting) && (
+      {/* Recording warning banner — shown for 3 seconds */}
+      {showRecordingBanner && (
         <div className="flex items-center justify-center gap-2 px-3 py-2 bg-red-700 text-white text-sm font-medium animate-pulse">
           <span className="inline-block w-3 h-3 rounded-full bg-red-300 animate-ping" />
           <span>
