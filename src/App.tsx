@@ -9,7 +9,6 @@ import {
   RtkCameraToggle,
   RtkChatToggle,
   RtkDialogManager,
-  RtkEndedScreen,
   RtkGrid,
   RtkLeaveButton,
   RtkLogo,
@@ -89,7 +88,21 @@ function Meeting() {
   }, [meeting, isRecording]);
 
   if (!meeting) return <RtkSpinner />;
-  if (roomState === 'ended' || roomState === 'left') return <RtkEndedScreen />;
+  if (roomState === 'ended' || roomState === 'left') {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4 text-slate-200">
+        <p className="text-lg font-medium">The meeting ended.</p>
+        <button
+          className="px-5 py-2 bg-sky-600 hover:bg-sky-500 rounded text-white font-medium"
+          onClick={() => {
+            window.location.href = window.location.origin + window.location.pathname;
+          }}
+        >
+          ← Return to Lobby
+        </button>
+      </div>
+    );
+  }
   if (!roomJoined) return <RtkSetupScreen meeting={meeting} />;
 
   return (
