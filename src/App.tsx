@@ -47,6 +47,8 @@ function Meeting() {
   const { meeting } = useRealtimeKitMeeting();
   const roomJoined = useRealtimeKitSelector((m) => m.self.roomJoined);
   const roomState = useRealtimeKitSelector((m) => m.self.roomState);
+  const selfName = useRealtimeKitSelector((m) => m.self.name);
+
   const canRecord = useRealtimeKitSelector((m) => m.self.permissions.canRecord);
 
   const [states, updateStates] = useReducer(
@@ -57,6 +59,26 @@ function Meeting() {
   const [recordingState, setRecordingState] = useState<string>('IDLE');
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [showRecordingBanner, setShowRecordingBanner] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+
+  // Meeting elapsed timer (hh:mm:ss)
+  const [meetingSeconds, setMeetingSeconds] = useState(0);
+  useEffect(() => {
+    if (!roomJoined) return;
+    setMeetingSeconds(0);
+    const iv = setInterval(() => setMeetingSeconds((s) => s + 1), 1000);
+    return () => clearInterval(iv);
+  }, [roomJoined]);
+
+  const [recSeconds, setRecSeconds] = useState(0);
+
+  const fmtTime = (totalSec: number) => {
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  };
 
   // Subscribe to recording state changes
   useEffect(() => {
@@ -69,8 +91,19 @@ function Meeting() {
   }, [meeting]);
 
   const isRecording = recordingState === 'RECORDING';
+  const isPaused = recordingState === 'PAUSED';
   const isStarting = recordingState === 'STARTING';
   const isStopping = recordingState === 'STOPPING';
+
+  // Recording elapsed timer — ticks while RECORDING, holds while PAUSED, resets on IDLE/STOPPING
+  useEffect(() => {
+    if (isRecording) {
+      const iv = setInterval(() => setRecSeconds((s) => s + 1), 1000);
+      return () => clearInterval(iv);
+    }
+    if (isPaused) return; // keep current value, don't tick
+    setRecSeconds(0); // reset on stop/idle
+  }, [isRecording, isPaused]);
 
   // Show banner briefly when recording starts
   useEffect(() => {
@@ -86,7 +119,7 @@ function Meeting() {
     if (!meeting?.recording) return;
     setRecordingBusy(true);
     try {
-      if (isRecording) {
+      if (isRecording || isPaused) {
         await meeting.recording.stop();
       } else {
         await meeting.recording.start();
@@ -96,7 +129,23 @@ function Meeting() {
     } finally {
       setRecordingBusy(false);
     }
-  }, [meeting, isRecording]);
+  }, [meeting, isRecording, isPaused]);
+
+  const togglePauseRecording = useCallback(async () => {
+    if (!meeting?.recording) return;
+    setRecordingBusy(true);
+    try {
+      if (isPaused) {
+        await meeting.recording.resume();
+      } else {
+        await meeting.recording.pause();
+      }
+    } catch (err: any) {
+      console.error('Recording pause/resume error:', err);
+    } finally {
+      setRecordingBusy(false);
+    }
+  }, [meeting, isPaused]);
 
   if (!meeting) return <RtkSpinner />;
   if (roomState === 'ended' || roomState === 'left') {
@@ -135,6 +184,43 @@ function Meeting() {
       <header className="flex items-center gap-3 h-12 border-b border-slate-700 w-full px-2 text-sm text-slate-200">
         <RtkLogo meeting={meeting} />
         <RtkMeetingTitle meeting={meeting} />
+        <span className="ml-2 font-mono text-xs text-slate-400" title="Meeting duration">
+          🕐 {fmtTime(meetingSeconds)}
+        </span>
+        {(isRecording || isPaused) && (
+          <span className={`ml-2 font-mono text-xs flex items-center gap-1 ${isPaused ? 'text-yellow-400' : 'text-red-400'}`} title={isPaused ? 'Recording paused' : 'Recording duration'}>
+            <span className={`inline-block w-2 h-2 rounded-full ${isPaused ? 'bg-yellow-500' : 'bg-red-500 animate-pulse'}`} />
+            {isPaused ? 'REC PAUSED' : 'REC'} {fmtTime(recSeconds)}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          {editingName ? (
+            <form className="flex items-center gap-1" onSubmit={async (e) => {
+              e.preventDefault();
+              if (nameDraft.trim() && meeting) {
+                try { await (meeting as any).changeDisplayName(nameDraft.trim()); } catch {}
+              }
+              setEditingName(false);
+            }}>
+              <input
+                autoFocus
+                className="bg-slate-800 border border-slate-500 rounded px-2 py-0.5 text-xs text-white w-32 focus:outline-none focus:border-sky-500"
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onBlur={() => setEditingName(false)}
+                onKeyDown={(e) => { if (e.key === 'Escape') setEditingName(false); }}
+              />
+            </form>
+          ) : (
+            <button
+              className="text-xs text-slate-400 hover:text-white truncate max-w-[150px]"
+              onClick={() => { setNameDraft(selfName || ''); setEditingName(true); }}
+              title="Click to change your display name"
+            >
+              {selfName || 'You'} ✏️
+            </button>
+          )}
+        </div>
       </header>
       <main className="flex flex-1 p-2 min-h-0">
         <RtkGrid meeting={meeting} config={config} />
@@ -152,18 +238,34 @@ function Meeting() {
           <RtkSettingsToggle />
           {/* Record button — only visible to hosts with canRecord permission */}
           {canRecord && (
-            <button
-              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
-                isRecording
-                  ? 'bg-red-600 hover:bg-red-500 text-white'
-                  : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
-              }`}
-              disabled={recordingBusy || isStarting || isStopping}
-              onClick={toggleRecording}
-              title={isRecording ? 'Stop recording' : 'Start recording'}
-            >
-              {isStarting ? '⏳ Starting…' : isStopping ? '⏳ Stopping…' : isRecording ? '⏹ Stop Rec' : '⏺ Record'}
-            </button>
+            <>
+              <button
+                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
+                  isRecording || isPaused
+                    ? 'bg-red-600 hover:bg-red-500 text-white'
+                    : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                }`}
+                disabled={recordingBusy || isStarting || isStopping}
+                onClick={toggleRecording}
+                title={isRecording || isPaused ? 'Stop recording' : 'Start recording'}
+              >
+                {isStarting ? '⏳ Starting…' : isStopping ? '⏳ Stopping…' : isRecording || isPaused ? '⏹ Stop' : '⏺ Record'}
+              </button>
+              {(isRecording || isPaused) && (
+                <button
+                  className={`px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
+                    isPaused
+                      ? 'bg-yellow-600 hover:bg-yellow-500 text-white'
+                      : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                  }`}
+                  disabled={recordingBusy}
+                  onClick={togglePauseRecording}
+                  title={isPaused ? 'Resume recording' : 'Pause recording'}
+                >
+                  {isPaused ? '▶ Resume' : '⏸ Pause'}
+                </button>
+              )}
+            </>
           )}
         </div>
         <div className="flex flex-1" />
