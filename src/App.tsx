@@ -1302,6 +1302,19 @@ function RealtimeMeeting() {
     );
   }
 
+  // Meeting not initialized yet — show waiting screen
+  if (!meeting) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-6 text-slate-200">
+        <div className="w-12 h-12 border-4 border-sky-500 border-t-transparent rounded-full animate-spin" />
+        <div className="text-center">
+          <p className="text-lg font-medium">Connecting to meeting…</p>
+          <p className="text-sm text-slate-400 mt-1">Setting up your session</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col w-full h-full">
       {inviteLink && (
