@@ -51,6 +51,26 @@ function Meeting() {
 
   const canRecord = useRealtimeKitSelector((m) => m.self.permissions.canRecord);
 
+  // Waitlist management (host)
+  const [waitlistedParticipants, setWaitlistedParticipants] = useState<any[]>([]);
+  const [showWaitlist, setShowWaitlist] = useState(false);
+
+  useEffect(() => {
+    if (!meeting?.participants?.waitlisted) return;
+    const updateWaitlist = () => {
+      const list: any[] = [];
+      meeting.participants.waitlisted.toArray().forEach((p: any) => list.push(p));
+      setWaitlistedParticipants(list);
+    };
+    updateWaitlist();
+    meeting.participants.waitlisted.on('participantJoined', updateWaitlist);
+    meeting.participants.waitlisted.on('participantLeft', updateWaitlist);
+    return () => {
+      meeting.participants.waitlisted.removeListener('participantJoined', updateWaitlist);
+      meeting.participants.waitlisted.removeListener('participantLeft', updateWaitlist);
+    };
+  }, [meeting]);
+
   const [states, updateStates] = useReducer(
     (state: any, payload: any) => ({ ...state, ...payload }),
     { meeting: 'joined', activeSidebar: false },
@@ -147,7 +167,40 @@ function Meeting() {
     }
   }, [meeting, isPaused]);
 
+  const acceptParticipant = useCallback((id: string) => {
+    meeting?.participants?.acceptWaitingRoomRequest(id);
+  }, [meeting]);
+
+  const rejectParticipant = useCallback(async (id: string) => {
+    await meeting?.participants?.rejectWaitingRoomRequest(id);
+  }, [meeting]);
+
+  const acceptAll = useCallback(async () => {
+    if (!meeting?.participants?.waitlisted) return;
+    const ids = meeting.participants.waitlisted.toArray().map((p: any) => p.id);
+    if (ids.length > 0) {
+      await meeting.participants.acceptAllWaitingRoomRequest(ids);
+    }
+  }, [meeting]);
+
   if (!meeting) return <RtkSpinner />;
+
+  // Guest: waiting room — shown when preset has waiting room enabled
+  if (roomState === 'waitlisted') {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-6 text-slate-200 p-8">
+        <div className="w-20 h-20 rounded-full bg-sky-900/50 flex items-center justify-center">
+          <span className="text-4xl">🕐</span>
+        </div>
+        <div className="text-center">
+          <h1 className="text-xl font-semibold">You're in the waiting room</h1>
+          <p className="text-sm text-slate-400 mt-2">The host will let you in soon</p>
+        </div>
+        <div className="w-8 h-8 border-3 border-sky-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   if (roomState === 'ended' || roomState === 'left') {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-slate-200">
@@ -167,7 +220,7 @@ function Meeting() {
 
   return (
     <div
-      className="flex flex-col w-full h-full"
+      className="flex flex-col w-full h-full relative"
       ref={(el) => {
         el?.addEventListener('rtkStateUpdate', (e: any) => updateStates(e.detail));
       }}
@@ -220,8 +273,72 @@ function Meeting() {
               {selfName || 'You'} ✏️
             </button>
           )}
+          {/* Waitlist indicator + toggle */}
+          {waitlistedParticipants.length > 0 && (
+            <button
+              className="relative ml-2 px-2 py-1 bg-amber-600 hover:bg-amber-500 rounded text-white text-xs font-medium"
+              onClick={() => setShowWaitlist(!showWaitlist)}
+              title={`${waitlistedParticipants.length} waiting`}
+            >
+              🖐 {waitlistedParticipants.length}
+            </button>
+          )}
         </div>
       </header>
+
+      {/* Waitlist panel — floating overlay */}
+      {showWaitlist && waitlistedParticipants.length > 0 && (
+        <div className="absolute top-14 right-2 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl w-72 max-h-80 overflow-y-auto">
+          <div className="flex items-center justify-between p-3 border-b border-slate-700">
+            <span className="text-sm font-medium text-slate-200">
+              Waiting Room ({waitlistedParticipants.length})
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-white text-xs"
+                onClick={acceptAll}
+              >
+                Accept All
+              </button>
+              <button
+                className="text-slate-500 hover:text-white text-sm"
+                onClick={() => setShowWaitlist(false)}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          <div className="p-2 flex flex-col gap-1">
+            {waitlistedParticipants.map((p: any) => (
+              <div key={p.id} className="flex items-center gap-2 px-2 py-2 rounded hover:bg-slate-700/50">
+                {p.picture ? (
+                  <img src={p.picture} alt="" className="w-8 h-8 rounded-full object-cover" />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center text-xs text-slate-300">
+                    {(p.name || '?')[0].toUpperCase()}
+                  </div>
+                )}
+                <span className="flex-1 text-sm text-slate-200 truncate">{p.name || p.customParticipantId || 'Guest'}</span>
+                <button
+                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-white text-xs"
+                  onClick={() => acceptParticipant(p.id)}
+                  title="Accept"
+                >
+                  ✓
+                </button>
+                <button
+                  className="px-2 py-1 bg-red-600 hover:bg-red-500 rounded text-white text-xs"
+                  onClick={() => rejectParticipant(p.id)}
+                  title="Deny"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <main className="flex flex-1 p-2 min-h-0">
         <RtkGrid meeting={meeting} config={config} />
         {states.activeSidebar && <RtkSidebar meeting={meeting} states={states} />}
@@ -314,6 +431,8 @@ function RealtimeMeeting() {
   const [waitingImage, setWaitingImage] = useState('');
   const [savingWaitingScreen, setSavingWaitingScreen] = useState(false);
   const [editingWaitingScreen, setEditingWaitingScreen] = useState(false);
+  const [waitingRoomEnabled, setWaitingRoomEnabled] = useState(false);
+  const [togglingWaitingRoom, setTogglingWaitingRoom] = useState(false);
   const [displayName, setDisplayName] = useState(() => {
     const stored = readStoredUser();
     if (!stored?.email) return '';
@@ -417,6 +536,8 @@ function RealtimeMeeting() {
           if (data.waitingScreen.title) setWaitingTitle(data.waitingScreen.title);
           if (data.waitingScreen.image) setWaitingImage(data.waitingScreen.image);
         }
+        // Load waiting room enabled state
+        setWaitingRoomEnabled(!!data.waitingRoomEnabled);
         // Update display name from config table if available
         if (data.displayName && !stored.displayName) {
           setDisplayName(data.displayName);
@@ -536,6 +657,27 @@ function RealtimeMeeting() {
       }
     } catch { /* ignore */ }
     finally { setSavingWaitingScreen(false); }
+  };
+
+  const toggleWaitingRoom = async () => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    setTogglingWaitingRoom(true);
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/toggle-waiting-room', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Token': stored.emailVerificationToken,
+        },
+        body: JSON.stringify({ enabled: !waitingRoomEnabled }),
+      });
+      const data = await r.json();
+      if (data.success) {
+        setWaitingRoomEnabled(data.waitingRoomEnabled);
+      }
+    } catch { /* ignore */ }
+    finally { setTogglingWaitingRoom(false); }
   };
 
   const fetchRecordings = async () => {
@@ -1011,9 +1153,29 @@ function RealtimeMeeting() {
           </button>
         )}
 
-        {/* Waiting Screen Settings */}
+        {/* Waiting Room & Screen Settings */}
         {(myRooms.personalMeetingId || myRooms.teamMeetingId) && (
-          <div className="w-full max-w-sm">
+          <div className="w-full max-w-sm flex flex-col gap-2">
+            {/* Waiting Room Toggle */}
+            <div className="flex items-center justify-between bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-sm">🖐</span>
+                <div>
+                  <span className="text-sm text-slate-200">Waiting Room</span>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Approve guests before they join</p>
+                </div>
+              </div>
+              <button
+                className={`relative w-10 h-5 rounded-full transition-colors ${waitingRoomEnabled ? 'bg-emerald-600' : 'bg-slate-600'} disabled:opacity-40`}
+                disabled={togglingWaitingRoom}
+                onClick={toggleWaitingRoom}
+                title={waitingRoomEnabled ? 'Disable waiting room' : 'Enable waiting room'}
+              >
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${waitingRoomEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+              </button>
+            </div>
+
+            {/* Waiting Screen Customization */}
             <button
               className="w-full text-left text-sm text-slate-400 hover:text-white flex items-center gap-2 py-1"
               onClick={() => setEditingWaitingScreen(!editingWaitingScreen)}
