@@ -278,6 +278,12 @@ function RealtimeMeeting() {
   const [meeting, initMeeting] = useRealtimeKitClient();
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [noParams, setNoParams] = useState(false);
+  const [waitingScreenInfo, setWaitingScreenInfo] = useState<{
+    meetingTitle?: string | null;
+    hostName?: string | null;
+    waitingTitle?: string | null;
+    waitingImage?: string | null;
+  } | null>(null);
   const [manualMeetingId, setManualMeetingId] = useState('');
   const [joining, setJoining] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
@@ -304,6 +310,10 @@ function RealtimeMeeting() {
   const [lobbyTab, setLobbyTab] = useState<'meetings' | 'recordings'>('meetings');
   const [playingKey, setPlayingKey] = useState<string | null>(null);
   const [copiedTranscript, setCopiedTranscript] = useState<string | null>(null);
+  const [waitingTitle, setWaitingTitle] = useState('');
+  const [waitingImage, setWaitingImage] = useState('');
+  const [savingWaitingScreen, setSavingWaitingScreen] = useState(false);
+  const [editingWaitingScreen, setEditingWaitingScreen] = useState(false);
   const [displayName, setDisplayName] = useState(() => {
     const stored = readStoredUser();
     if (!stored?.email) return '';
@@ -402,6 +412,11 @@ function RealtimeMeeting() {
         setMyRooms({ personalMeetingId: data.personalMeetingId, teamMeetingId: data.teamMeetingId });
         if (data.personalTitle) setPersonalRoomTitle(data.personalTitle);
         if (data.teamTitle) setTeamRoomTitle(data.teamTitle);
+        // Load waiting screen config
+        if (data.waitingScreen) {
+          if (data.waitingScreen.title) setWaitingTitle(data.waitingScreen.title);
+          if (data.waitingScreen.image) setWaitingImage(data.waitingScreen.image);
+        }
         // Update display name from config table if available
         if (data.displayName && !stored.displayName) {
           setDisplayName(data.displayName);
@@ -500,6 +515,27 @@ function RealtimeMeeting() {
       setSavingTitle(false);
       setEditingRoomTitle(null);
     }
+  };
+
+  const saveWaitingScreen = async () => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    setSavingWaitingScreen(true);
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/update-waiting-screen', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Token': stored.emailVerificationToken,
+        },
+        body: JSON.stringify({ title: waitingTitle.trim() || null, image: waitingImage.trim() || null }),
+      });
+      const data = await r.json();
+      if (data.success) {
+        setEditingWaitingScreen(false);
+      }
+    } catch { /* ignore */ }
+    finally { setSavingWaitingScreen(false); }
   };
 
   const fetchRecordings = async () => {
@@ -760,6 +796,12 @@ function RealtimeMeeting() {
 
     // Meeting ID in URL — fetch a fresh participant token from the backend.
     if (meetingId) {
+      // Fetch waiting screen info in parallel (public, no auth needed)
+      fetch(`https://api.vegvisr.org/realtime/meeting-info?meetingId=${encodeURIComponent(meetingId)}`)
+        .then((r) => r.json())
+        .then((info) => { if (info.success) setWaitingScreenInfo(info); })
+        .catch(() => { /* ignore — waiting screen will show generic fallback */ });
+
       const stored = readStoredUser();
       if (!stored?.emailVerificationToken) {
         setTokenError('You must be logged in to join this meeting.');
@@ -967,6 +1009,78 @@ function RealtimeMeeting() {
           >
             {provisioningRooms ? 'Setting up…' : '🔧 Set Up My Permanent Rooms'}
           </button>
+        )}
+
+        {/* Waiting Screen Settings */}
+        {(myRooms.personalMeetingId || myRooms.teamMeetingId) && (
+          <div className="w-full max-w-sm">
+            <button
+              className="w-full text-left text-sm text-slate-400 hover:text-white flex items-center gap-2 py-1"
+              onClick={() => setEditingWaitingScreen(!editingWaitingScreen)}
+            >
+              <span>{editingWaitingScreen ? '▾' : '▸'}</span>
+              <span>🖼️ Waiting Screen Settings</span>
+              {(waitingTitle || waitingImage) && !editingWaitingScreen && (
+                <span className="text-xs text-sky-400 ml-auto">configured</span>
+              )}
+            </button>
+            {editingWaitingScreen && (
+              <div className="flex flex-col gap-3 mt-2 bg-slate-800/50 border border-slate-700 rounded-lg p-3">
+                <p className="text-xs text-slate-400">Customize what guests see while joining your room</p>
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">Title</label>
+                  <input
+                    type="text"
+                    className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-sky-500"
+                    placeholder="e.g. Welcome to my meeting"
+                    value={waitingTitle}
+                    onChange={(e) => setWaitingTitle(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">Image URL</label>
+                  <input
+                    type="url"
+                    className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-sky-500"
+                    placeholder="https://example.com/my-logo.png"
+                    value={waitingImage}
+                    onChange={(e) => setWaitingImage(e.target.value)}
+                  />
+                </div>
+                {/* Preview */}
+                {(waitingTitle || waitingImage) && (
+                  <div className="flex flex-col items-center gap-2 bg-slate-900 rounded-lg p-4 border border-slate-700">
+                    <p className="text-[10px] text-slate-500 mb-1">Preview</p>
+                    {waitingImage && (
+                      <img
+                        src={waitingImage}
+                        alt="Waiting screen preview"
+                        className="w-16 h-16 rounded-xl object-cover"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                      />
+                    )}
+                    {waitingTitle && <p className="text-sm font-medium text-slate-200">{waitingTitle}</p>}
+                    <p className="text-[10px] text-slate-500">Hosted by {displayName || 'you'}</p>
+                  </div>
+                )}
+                <div className="flex gap-2 justify-end">
+                  <button
+                    className="px-3 py-1.5 text-slate-500 hover:text-white text-xs"
+                    onClick={() => setEditingWaitingScreen(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 rounded text-white text-xs disabled:opacity-40"
+                    disabled={savingWaitingScreen}
+                    onClick={saveWaitingScreen}
+                  >
+                    {savingWaitingScreen ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {/* Create Meeting */}
@@ -1304,13 +1418,31 @@ function RealtimeMeeting() {
 
   // Meeting not initialized yet — show waiting screen
   if (!meeting) {
+    const wsTitle = waitingScreenInfo?.waitingTitle || waitingScreenInfo?.meetingTitle;
+    const wsHost = waitingScreenInfo?.hostName;
+    const wsImage = waitingScreenInfo?.waitingImage;
+
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-6 text-slate-200">
-        <div className="w-12 h-12 border-4 border-sky-500 border-t-transparent rounded-full animate-spin" />
+      <div className="flex flex-col items-center justify-center h-full gap-6 text-slate-200 p-8">
+        {wsImage && (
+          <img
+            src={wsImage}
+            alt={wsTitle || 'Meeting'}
+            className="w-32 h-32 rounded-2xl object-cover shadow-lg shadow-sky-900/30"
+          />
+        )}
         <div className="text-center">
-          <p className="text-lg font-medium">Connecting to meeting…</p>
-          <p className="text-sm text-slate-400 mt-1">Setting up your session</p>
+          {wsTitle ? (
+            <h1 className="text-2xl font-semibold">{wsTitle}</h1>
+          ) : (
+            <p className="text-lg font-medium">Connecting to meeting…</p>
+          )}
+          {wsHost && (
+            <p className="text-sm text-slate-400 mt-2">Hosted by <span className="text-slate-200">{wsHost}</span></p>
+          )}
         </div>
+        <div className="w-10 h-10 border-4 border-sky-500 border-t-transparent rounded-full animate-spin" />
+        <p className="text-sm text-slate-500">Setting up your session</p>
       </div>
     );
   }
