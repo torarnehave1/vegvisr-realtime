@@ -54,50 +54,34 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
   // Guard: ensure meeting.join() is called at most once per mount
   const joinCalledRef = React.useRef(false);
 
-  // Custom DB-backed waiting room panel (host only)
+  // ── Waiting room (host only) ──────────────────────────────────────────────
   const [waitingGuests, setWaitingGuests] = useState<any[]>([]);
-  const [showWaitlist, setShowWaitlist] = useState(false);
-  const [knockNotification, setKnockNotification] = useState<string | null>(null);
+  const [showWaitlist, setShowWaitlist] = useState(true);
+  // Draggable modal position
+  const [dragPos, setDragPos] = useState({ x: window.innerWidth - 320, y: 60 });
+  const dragRef = React.useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
 
-  const fetchWaitingGuests = useCallback(async () => {
+  // Simple polling — no useCallback, no stale closure tricks
+  useEffect(() => {
     if (!isHost || !meetingId) return;
-    const stored = readStoredUser();
-    if (!stored?.emailVerificationToken) return;
-    try {
-      const r = await fetch(`https://api.vegvisr.org/realtime/waiting-room/list?meetingId=${encodeURIComponent(meetingId)}`, {
-        headers: { 'X-API-Token': stored.emailVerificationToken },
-      });
-      const data = await r.json();
-      if (data.success) {
-        const incoming = data.guests || [];
-        setWaitingGuests((prev) => {
-          // show notification only when count goes up
-          if (incoming.length > prev.length && incoming.length > 0) {
-            const newest = incoming[incoming.length - 1];
-            setKnockNotification(`${newest.guest_name || newest.guest_email} is waiting to join`);
-            setShowWaitlist(true);
-          }
-          // auto-open panel whenever there are guests
-          if (incoming.length > 0) setShowWaitlist(true);
-          return incoming;
-        });
-      }
-    } catch { /* ignore */ }
+    const poll = async () => {
+      const stored = readStoredUser();
+      if (!stored?.emailVerificationToken) return;
+      try {
+        const r = await fetch(
+          `https://api.vegvisr.org/realtime/waiting-room/list?meetingId=${encodeURIComponent(meetingId)}`,
+          { headers: { 'X-API-Token': stored.emailVerificationToken } }
+        );
+        const data = await r.json();
+        if (data.success) setWaitingGuests(data.guests || []);
+      } catch { /* ignore */ }
+    };
+    poll(); // immediate first call
+    const iv = setInterval(poll, 4000);
+    return () => clearInterval(iv);
   }, [isHost, meetingId]);
 
-  // Keep a ref so the interval always calls the latest version
-  const fetchWaitingGuestsRef = React.useRef(fetchWaitingGuests);
-  fetchWaitingGuestsRef.current = fetchWaitingGuests;
-
-  // Poll every 4 seconds when host is in meeting
-  useEffect(() => {
-    if (!isHost) return;
-    fetchWaitingGuestsRef.current();
-    const iv = setInterval(() => fetchWaitingGuestsRef.current(), 4000);
-    return () => clearInterval(iv);
-  }, [isHost]);
-
-  const admitGuest = useCallback(async (guestEmail: string) => {
+  const admitGuest = async (guestEmail: string) => {
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) return;
     await fetch('https://api.vegvisr.org/realtime/waiting-room/admit', {
@@ -106,9 +90,9 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
       body: JSON.stringify({ meetingId, guestEmail }),
     });
     setWaitingGuests((prev) => prev.filter((g) => g.guest_email !== guestEmail));
-  }, [meetingId]);
+  };
 
-  const denyGuest = useCallback(async (guestEmail: string) => {
+  const denyGuest = async (guestEmail: string) => {
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) return;
     await fetch('https://api.vegvisr.org/realtime/waiting-room/deny', {
@@ -117,18 +101,26 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
       body: JSON.stringify({ meetingId, guestEmail }),
     });
     setWaitingGuests((prev) => prev.filter((g) => g.guest_email !== guestEmail));
-  }, [meetingId]);
+  };
 
-  const admitAll = useCallback(async () => {
-    for (const g of waitingGuests) await admitGuest(g.guest_email);
-  }, [waitingGuests, admitGuest]);
-
-  // Auto-dismiss knock notification after 6 seconds
-  useEffect(() => {
-    if (!knockNotification) return;
-    const timer = setTimeout(() => setKnockNotification(null), 6000);
-    return () => clearTimeout(timer);
-  }, [knockNotification]);
+  const onDragStart = (e: React.MouseEvent) => {
+    dragRef.current = { startX: e.clientX, startY: e.clientY, origX: dragPos.x, origY: dragPos.y };
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current) return;
+      setDragPos({
+        x: dragRef.current.origX + ev.clientX - dragRef.current.startX,
+        y: dragRef.current.origY + ev.clientY - dragRef.current.startY,
+      });
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+  // ─────────────────────────────────────────────────────────────────────────
 
   const [states, updateStates] = useReducer(
     (state: any, payload: any) => ({ ...state, ...payload }),
@@ -265,22 +257,6 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
         el?.addEventListener('rtkStateUpdate', (e: any) => updateStates(e.detail));
       }}
     >
-      {/* Knock notification banner — auto-dismisses after 6 seconds */}
-      {knockNotification && (
-        <div className="flex items-center justify-between gap-2 px-3 py-2 bg-amber-700 text-white text-sm font-medium">
-          <div className="flex items-center gap-2">
-            <span className="inline-block w-3 h-3 rounded-full bg-amber-300 animate-ping" />
-            <span>🖐 {knockNotification}</span>
-          </div>
-          <button
-            className="px-2 py-0.5 bg-amber-500 hover:bg-amber-400 rounded text-white text-xs ml-2"
-            onClick={() => { setKnockNotification(null); setShowWaitlist(true); }}
-          >
-            View →
-          </button>
-        </div>
-      )}
-
       {/* Recording warning banner — shown for 3 seconds */}
       {showRecordingBanner && (
         <div className="flex items-center justify-center gap-2 px-3 py-2 bg-red-700 text-white text-sm font-medium animate-pulse">
@@ -329,12 +305,12 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
               {selfName || 'You'} ✏️
             </button>
           )}
-          {/* Waiting room indicator (host only) — always visible so host can manually check */}
+          {/* Waiting room toggle button — always visible to host */}
           {isHost && (
             <button
-              className={`relative ml-2 px-2 py-1 rounded text-white text-xs font-medium ${waitingGuests.length > 0 ? (knockNotification ? 'bg-amber-500 animate-pulse ring-2 ring-amber-300' : 'bg-amber-600 hover:bg-amber-500') : 'bg-slate-600 hover:bg-slate-500'}`}
-              onClick={() => { fetchWaitingGuestsRef.current(); setShowWaitlist(!showWaitlist); }}
-              title={waitingGuests.length > 0 ? `${waitingGuests.length} waiting` : 'Waiting room (click to check)'}
+              className={`ml-2 px-2 py-1 rounded text-white text-xs font-medium ${waitingGuests.length > 0 ? 'bg-amber-600 hover:bg-amber-500 animate-pulse' : 'bg-slate-600 hover:bg-slate-500'}`}
+              onClick={() => setShowWaitlist((v) => !v)}
+              title="Toggle waiting room"
             >
               🖐 {waitingGuests.length}
             </button>
@@ -342,30 +318,53 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
         </div>
       </header>
 
-      {/* Custom DB-backed waiting room panel (host only) */}
-      {isHost && showWaitlist && waitingGuests.length > 0 && (
-        <div className="absolute top-14 right-2 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl w-72 max-h-80 overflow-y-auto">
-          <div className="flex items-center justify-between p-3 border-b border-slate-700">
-            <span className="text-sm font-medium text-slate-200">Waiting Room ({waitingGuests.length})</span>
-            <div className="flex items-center gap-2">
-              <button className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-white text-xs" onClick={admitAll}>Admit All</button>
-              <button className="text-slate-500 hover:text-white text-sm" onClick={() => setShowWaitlist(false)}>✕</button>
-            </div>
+      {/* ── Draggable waiting room modal (host only) ──────────────────────── */}
+      {isHost && showWaitlist && (
+        <div
+          style={{ position: 'fixed', left: dragPos.x, top: dragPos.y, zIndex: 9999, width: 300 }}
+          className="bg-slate-900 border border-slate-500 rounded-xl shadow-2xl select-none"
+        >
+          {/* Drag handle */}
+          <div
+            className="flex items-center justify-between px-3 py-2 bg-slate-700 rounded-t-xl cursor-grab active:cursor-grabbing"
+            onMouseDown={onDragStart}
+          >
+            <span className="text-sm font-semibold text-white">🖐 Waiting Room ({waitingGuests.length})</span>
+            <button className="text-slate-400 hover:text-white text-lg leading-none" onClick={() => setShowWaitlist(false)}>✕</button>
           </div>
-          <div className="p-2 flex flex-col gap-1">
-            {waitingGuests.map((g: any) => (
-              <div key={g.guest_email} className="flex items-center gap-2 px-2 py-2 rounded hover:bg-slate-700/50">
-                <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center text-xs text-slate-300">
-                  {(g.guest_name || '?')[0].toUpperCase()}
-                </div>
-                <span className="flex-1 text-sm text-slate-200 truncate">{g.guest_name || g.guest_email}</span>
-                <button className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-white text-xs" onClick={() => admitGuest(g.guest_email)}>✓</button>
-                <button className="px-2 py-1 bg-red-600 hover:bg-red-500 rounded text-white text-xs" onClick={() => denyGuest(g.guest_email)}>✕</button>
-              </div>
-            ))}
+
+          {/* Guest list */}
+          <div className="p-2 flex flex-col gap-1 max-h-72 overflow-y-auto">
+            {waitingGuests.length === 0 ? (
+              <p className="text-slate-400 text-xs text-center py-4">No one waiting</p>
+            ) : (
+              <>
+                {waitingGuests.map((g: any) => (
+                  <div key={g.guest_email} className="flex items-center gap-2 px-2 py-2 rounded hover:bg-slate-800">
+                    <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center text-xs text-white font-bold flex-shrink-0">
+                      {(g.guest_name || g.guest_email || '?')[0].toUpperCase()}
+                    </div>
+                    <span className="flex-1 text-sm text-slate-200 truncate">{g.guest_name || g.guest_email}</span>
+                    <button
+                      className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-white text-xs font-medium"
+                      onClick={() => admitGuest(g.guest_email)}
+                    >✓ Admit</button>
+                    <button
+                      className="px-2 py-1 bg-red-700 hover:bg-red-600 rounded text-white text-xs font-medium"
+                      onClick={() => denyGuest(g.guest_email)}
+                    >✕</button>
+                  </div>
+                ))}
+                <button
+                  className="mt-1 w-full py-1.5 bg-emerald-700 hover:bg-emerald-600 rounded text-white text-xs font-medium"
+                  onClick={() => waitingGuests.forEach((g) => admitGuest(g.guest_email))}
+                >Admit All</button>
+              </>
+            )}
           </div>
         </div>
       )}
+      {/* ────────────────────────────────────────────────────────────────────── */}
 
       <main className="flex flex-1 p-2 min-h-0">
         <RtkGrid meeting={meeting} config={config} />
