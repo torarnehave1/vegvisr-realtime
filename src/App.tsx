@@ -1030,8 +1030,7 @@ function RealtimeMeeting() {
 
     // Meeting ID in URL — sequential flow:
     // 1. Fetch meeting info (title, host, waiting room config)
-    // 2. If waiting room enabled and host not online: show "waiting for host" screen
-    // 3. Otherwise: fetch token and join
+    // 2. Always fetch token and join so the setup screen is shown first
     if (meetingId) {
       const joinMeetingById = async (id: string) => {
         // Step 1: Fetch meeting info
@@ -1042,14 +1041,7 @@ function RealtimeMeeting() {
           if (meetingInfo?.success) setWaitingScreenInfo(meetingInfo);
         } catch { /* ignore — proceed without info */ }
 
-        // Step 2: If waiting room is on and host is confirmed offline, show waiting-for-host
-        if (meetingInfo?.waitingRoomEnabled && meetingInfo?.hostOnline === false) {
-          console.log('[WaitingRoom] Host not yet in meeting. Showing waiting-for-host screen.');
-          setWaitingForHost(true);
-          return;
-        }
-
-        // Step 3: Fetch join token and initialize
+        // Step 2: Fetch join token and initialize
         const stored = readStoredUser();
         if (!stored?.emailVerificationToken) {
           setTokenError('You must be logged in to join this meeting.');
@@ -1691,37 +1683,6 @@ function RealtimeMeeting() {
         </div>
         )}
 
-      </div>
-    );
-  }
-
-  // Waiting for host to start the meeting (waiting room is ON but host isn't in the meeting yet)
-  if (waitingForHost && !meeting) {
-    const wsTitle = waitingScreenInfo?.waitingTitle || waitingScreenInfo?.meetingTitle;
-    const wsHost = waitingScreenInfo?.hostName;
-    const wsImage = waitingScreenInfo?.waitingImage;
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-6 text-slate-200 p-8">
-        {wsImage && (
-          <img src={wsImage} alt={wsTitle || 'Meeting'} className="w-32 h-32 rounded-2xl object-cover shadow-lg shadow-sky-900/30" />
-        )}
-        <div className="text-center">
-          {wsTitle && <h1 className="text-2xl font-semibold mb-1">{wsTitle}</h1>}
-          <p className="text-lg font-medium">Waiting for host to start the meeting</p>
-          {wsHost && <p className="text-sm text-slate-400 mt-2">Hosted by <span className="text-slate-200">{wsHost}</span></p>}
-          <p className="text-xs text-slate-500 mt-3">The meeting hasn't started yet. The host will let you in once they join.</p>
-        </div>
-        <button
-          onClick={checkHostAndJoin}
-          disabled={checkingHost}
-          className="px-5 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded text-white font-medium flex items-center gap-2"
-        >
-          {checkingHost ? (
-            <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Checking…</>
-          ) : (
-            '🔄 Check Again'
-          )}
-        </button>
       </div>
     );
   }
