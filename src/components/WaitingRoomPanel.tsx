@@ -34,13 +34,13 @@ export function WaitingRoomPanel({ meeting }: { meeting: any }) {
     <>
       <button
         onClick={() => setOpen(!open)}
-        style={{ position: 'fixed', bottom: 80, right: 20, zIndex: 1000, padding: '8px 16px', background: '#374151', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13 }}
+        style={{ position: 'fixed', bottom: 80, right: 20, zIndex: 2147483647, pointerEvents: 'auto', padding: '8px 16px', background: '#374151', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13 }}
       >
         Waiting Room ({list.length})
       </button>
 
       {open && (
-        <div style={{ position: 'fixed', bottom: 130, right: 20, zIndex: 1000, width: 280, background: '#1e293b', border: '1px solid #334155', borderRadius: 8, padding: 12 }}>
+        <div style={{ position: 'fixed', bottom: 130, right: 20, zIndex: 2147483647, pointerEvents: 'auto', width: 280, background: '#1e293b', border: '1px solid #334155', borderRadius: 8, padding: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
             <span style={{ color: 'white', fontWeight: 600 }}>Waiting Room</span>
             <div style={{ display: 'flex', gap: 8 }}>
