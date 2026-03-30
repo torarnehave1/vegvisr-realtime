@@ -51,6 +51,9 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
   const selfName = useRealtimeKitSelector((m) => m.self.name);
   const canRecord = useRealtimeKitSelector((m) => m.self.permissions.canRecord);
 
+  // Guard: ensure meeting.join() is called at most once per mount
+  const joinCalledRef = React.useRef(false);
+
   // Custom DB-backed waiting room panel (host only)
   const [waitingGuests, setWaitingGuests] = useState<any[]>([]);
   const [showWaitlist, setShowWaitlist] = useState(false);
@@ -234,7 +237,8 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
     );
   }
   if (!roomJoined) {
-    if (roomState === 'init' && meeting) {
+    if (roomState === 'init' && meeting && !joinCalledRef.current) {
+      joinCalledRef.current = true;
       (meeting as any).join().catch((e: any) => console.error('auto-join error:', e));
     }
     return (
