@@ -421,7 +421,12 @@ function RealtimeMeeting() {
     hostName?: string | null;
     waitingTitle?: string | null;
     waitingImage?: string | null;
+    waitingRoomEnabled?: boolean | null;
+    hostOnline?: boolean | null;
   } | null>(null);
+  // Pre-join state: when waiting room is on and host isn't in the meeting yet
+  const [waitingForHost, setWaitingForHost] = useState(false);
+  const [checkingHost, setCheckingHost] = useState(false);
   const [manualMeetingId, setManualMeetingId] = useState('');
   const [joining, setJoining] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
@@ -500,6 +505,37 @@ function RealtimeMeeting() {
   };
 
   const joinByMeetingId = (id: string) => fetchTokenAndJoin(id);
+
+  // Check if host is online and join if so — used by "waiting for host" retry button
+  const checkHostAndJoin = async () => {
+    const meetingId = new URL(window.location.href).searchParams.get('meetingId');
+    if (!meetingId) return;
+    setCheckingHost(true);
+    try {
+      const r = await fetch(`https://api.vegvisr.org/realtime/meeting-info?meetingId=${encodeURIComponent(meetingId)}`);
+      const info = await r.json();
+      if (info?.success) setWaitingScreenInfo(info);
+      if (!info?.waitingRoomEnabled || info?.hostOnline !== false) {
+        // Host is now online (or waiting room was turned off) — proceed with join
+        setWaitingForHost(false);
+        const stored = readStoredUser();
+        if (!stored?.emailVerificationToken) { setTokenError('You must be logged in.'); return; }
+        const tokenResp = await fetch('https://api.vegvisr.org/realtime/join-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Token': stored.emailVerificationToken },
+          body: JSON.stringify({ meetingId, clientData: { customParticipantId: stored.email, name: displayName.trim() || stored.email.split('@')[0] } }),
+        });
+        const data = await tokenResp.json();
+        if (!data.authToken) throw new Error(data.error || 'No token returned');
+        await initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
+      }
+      // else: host still not online — stay on waiting-for-host screen
+    } catch (err: any) {
+      setTokenError(err.message);
+    } finally {
+      setCheckingHost(false);
+    }
+  };
 
   const createMeeting = async () => {
     const stored = readStoredUser();
@@ -959,41 +995,56 @@ function RealtimeMeeting() {
       return;
     }
 
-    // Meeting ID in URL — fetch a fresh participant token from the backend.
+    // Meeting ID in URL — sequential flow:
+    // 1. Fetch meeting info (title, host, waiting room config)
+    // 2. If waiting room enabled and host not online: show "waiting for host" screen
+    // 3. Otherwise: fetch token and join
     if (meetingId) {
-      // Fetch waiting screen info in parallel (public, no auth needed)
-      fetch(`https://api.vegvisr.org/realtime/meeting-info?meetingId=${encodeURIComponent(meetingId)}`)
-        .then((r) => r.json())
-        .then((info) => { if (info.success) setWaitingScreenInfo(info); })
-        .catch(() => { /* ignore — waiting screen will show generic fallback */ });
+      const joinMeetingById = async (id: string) => {
+        // Step 1: Fetch meeting info
+        let meetingInfo: any = null;
+        try {
+          const r = await fetch(`https://api.vegvisr.org/realtime/meeting-info?meetingId=${encodeURIComponent(id)}`);
+          meetingInfo = await r.json();
+          if (meetingInfo?.success) setWaitingScreenInfo(meetingInfo);
+        } catch { /* ignore — proceed without info */ }
 
-      const stored = readStoredUser();
-      if (!stored?.emailVerificationToken) {
-        setTokenError('You must be logged in to join this meeting.');
-        return;
-      }
-      fetch('https://api.vegvisr.org/realtime/join-token', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Token': stored.emailVerificationToken,
-        },
-        body: JSON.stringify({
-          meetingId,
-          clientData: {
-            customParticipantId: stored.email,
-            name: displayName.trim() || stored.email.split('@')[0],
-          },
-        }),
-      })
-        .then((r) => r.json())
-        .then(async (data) => {
+        // Step 2: If waiting room is on and host is confirmed offline, show waiting-for-host
+        if (meetingInfo?.waitingRoomEnabled && meetingInfo?.hostOnline === false) {
+          console.log('[WaitingRoom] Host not yet in meeting. Showing waiting-for-host screen.');
+          setWaitingForHost(true);
+          return;
+        }
+
+        // Step 3: Fetch join token and initialize
+        const stored = readStoredUser();
+        if (!stored?.emailVerificationToken) {
+          setTokenError('You must be logged in to join this meeting.');
+          return;
+        }
+        try {
+          const r = await fetch('https://api.vegvisr.org/realtime/join-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-API-Token': stored.emailVerificationToken },
+            body: JSON.stringify({
+              meetingId: id,
+              clientData: {
+                customParticipantId: stored.email,
+                name: displayName.trim() || stored.email.split('@')[0],
+              },
+            }),
+          });
+          const data = await r.json();
           if (!data.authToken) throw new Error(data.error || 'No token returned from server');
           console.log('[WaitingRoom] Got authToken from backend. Calling initMeeting...');
           await initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
           console.log('[WaitingRoom] initMeeting() resolved. Meeting initialized.');
-        })
-        .catch((err) => setTokenError(err.message));
+        } catch (err: any) {
+          setTokenError(err.message);
+        }
+      };
+
+      joinMeetingById(meetingId);
       return;
     }
 
@@ -1199,6 +1250,14 @@ function RealtimeMeeting() {
                 <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${waitingRoomEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
               </button>
             </div>
+            {waitingRoomEnabled && (
+              <div className="flex items-start gap-2 bg-amber-900/30 border border-amber-700/50 rounded-lg px-3 py-2 text-[11px] text-amber-300">
+                <span className="mt-0.5 shrink-0">⚠️</span>
+                <span>
+                  <strong>Important:</strong> Guests will only be held in the waiting room if you <strong>join your meeting first</strong>. Start your meeting, then share the invite link.
+                </span>
+              </div>
+            )}
 
             {/* Waiting Screen Customization */}
             <button
@@ -1599,6 +1658,37 @@ function RealtimeMeeting() {
         </div>
         )}
 
+      </div>
+    );
+  }
+
+  // Waiting for host to start the meeting (waiting room is ON but host isn't in the meeting yet)
+  if (waitingForHost && !meeting) {
+    const wsTitle = waitingScreenInfo?.waitingTitle || waitingScreenInfo?.meetingTitle;
+    const wsHost = waitingScreenInfo?.hostName;
+    const wsImage = waitingScreenInfo?.waitingImage;
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-6 text-slate-200 p-8">
+        {wsImage && (
+          <img src={wsImage} alt={wsTitle || 'Meeting'} className="w-32 h-32 rounded-2xl object-cover shadow-lg shadow-sky-900/30" />
+        )}
+        <div className="text-center">
+          {wsTitle && <h1 className="text-2xl font-semibold mb-1">{wsTitle}</h1>}
+          <p className="text-lg font-medium">Waiting for host to start the meeting</p>
+          {wsHost && <p className="text-sm text-slate-400 mt-2">Hosted by <span className="text-slate-200">{wsHost}</span></p>}
+          <p className="text-xs text-slate-500 mt-3">The meeting hasn't started yet. The host will let you in once they join.</p>
+        </div>
+        <button
+          onClick={checkHostAndJoin}
+          disabled={checkingHost}
+          className="px-5 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded text-white font-medium flex items-center gap-2"
+        >
+          {checkingHost ? (
+            <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Checking…</>
+          ) : (
+            '🔄 Check Again'
+          )}
+        </button>
       </div>
     );
   }
