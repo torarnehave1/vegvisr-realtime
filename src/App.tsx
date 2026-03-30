@@ -492,6 +492,7 @@ function RealtimeMeeting() {
   const [editingWaitingScreen, setEditingWaitingScreen] = useState(false);
   const [waitingRoomEnabled, setWaitingRoomEnabled] = useState(false);
   const [togglingWaitingRoom, setTogglingWaitingRoom] = useState(false);
+  const [pendingMeetingId, setPendingMeetingId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState(() => {
     const stored = readStoredUser();
     if (!stored?.email) return '';
@@ -1028,45 +1029,17 @@ function RealtimeMeeting() {
       return;
     }
 
-    // Meeting ID in URL — sequential flow:
-    // 1. Fetch meeting info (title, host, waiting room config)
-    // 2. Fetch join token and initialize (RTK setup screen is the only join UI)
+    // Meeting ID in URL — show pre-join screen first, only call initMeeting after user clicks Join
     if (meetingId) {
-      const joinMeetingById = async (id: string) => {
+      const fetchInfo = async (id: string) => {
         try {
           const r = await fetch(`https://api.vegvisr.org/realtime/meeting-info?meetingId=${encodeURIComponent(id)}`);
           const meetingInfo = await r.json();
           if (meetingInfo?.success) setWaitingScreenInfo(meetingInfo);
-        } catch { /* ignore — proceed without info */ }
-
-        const stored = readStoredUser();
-        if (!stored?.emailVerificationToken) {
-          setTokenError('You must be logged in to join this meeting.');
-          return;
-        }
-        try {
-          const r = await fetch('https://api.vegvisr.org/realtime/join-token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-API-Token': stored.emailVerificationToken },
-            body: JSON.stringify({
-              meetingId: id,
-              clientData: {
-                customParticipantId: stored.email,
-                name: displayName.trim() || stored.email.split('@')[0],
-              },
-            }),
-          });
-          const data = await r.json();
-          if (!data.authToken) throw new Error(data.error || 'No token returned from server');
-          console.log('[WaitingRoom] Got authToken from backend. Calling initMeeting...');
-          await initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
-          console.log('[WaitingRoom] initMeeting() resolved. Meeting initialized.');
-        } catch (err: any) {
-          setTokenError(err.message);
-        }
+        } catch { /* ignore */ }
+        setPendingMeetingId(id);
       };
-
-      joinMeetingById(meetingId);
+      fetchInfo(meetingId);
       return;
     }
 
@@ -1074,6 +1047,53 @@ function RealtimeMeeting() {
     setNoParams(true);
     fetchMyRooms();
   }, []);
+
+  // Pre-join screen — shown when meetingId is in URL, BEFORE user clicks Join
+  if (pendingMeetingId) {
+    const info = waitingScreenInfo;
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-6 text-slate-200 p-8">
+        <div className="w-full max-w-sm bg-slate-800 border border-slate-700 rounded-xl p-6 flex flex-col gap-5 shadow-xl">
+          {info?.waitingImage && (
+            <img src={info.waitingImage} alt="" className="w-full h-32 object-cover rounded-lg" />
+          )}
+          <div className="text-center">
+            <h1 className="text-lg font-semibold">{info?.meetingTitle || 'Join Meeting'}</h1>
+            {info?.hostName && (
+              <p className="text-sm text-slate-400 mt-1">Hosted by {info.hostName}</p>
+            )}
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-slate-400">Your name</label>
+            <input
+              className="bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="Enter your name"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !joining) {
+                  setPendingMeetingId(null);
+                  fetchTokenAndJoin(pendingMeetingId);
+                }
+              }}
+            />
+          </div>
+          {tokenError && <p className="text-red-400 text-sm">{tokenError}</p>}
+          <button
+            className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded text-white font-medium transition-colors"
+            disabled={joining}
+            onClick={() => {
+              const id = pendingMeetingId;
+              setPendingMeetingId(null);
+              fetchTokenAndJoin(id);
+            }}
+          >
+            {joining ? 'Joining…' : 'Join Meeting'}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (tokenError) {
     return (
