@@ -44,58 +44,72 @@ if (config.root) {
   ).children;
 }
 
-function Meeting() {
+function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) {
   const { meeting } = useRealtimeKitMeeting();
   const roomJoined = useRealtimeKitSelector((m) => m.self.roomJoined);
   const roomState = useRealtimeKitSelector((m) => m.self.roomState);
   const selfName = useRealtimeKitSelector((m) => m.self.name);
-
   const canRecord = useRealtimeKitSelector((m) => m.self.permissions.canRecord);
 
-  // Debug: log every roomState and roomJoined change
-  useEffect(() => {
-    console.log('[WaitingRoom] roomState:', roomState, '| roomJoined:', roomJoined, '| selfName:', selfName);
-  }, [roomState, roomJoined, selfName]);
-
-  // Debug: log when meeting object changes
-  useEffect(() => {
-    if (!meeting) return;
-    console.log('[WaitingRoom] meeting initialized. self.waitListAndRoomWaitingInfo:', (meeting as any)?.self?.waitListAndRoomWaitingInfo);
-    console.log('[WaitingRoom] meeting.self:', {
-      id: (meeting as any)?.self?.id,
-      presetId: (meeting as any)?.self?.presetId,
-      waitlisted: (meeting as any)?.self?.waitlisted,
-      roomState: (meeting as any)?.self?.roomState,
-    });
-  }, [meeting]);
-
-  // Waitlist management (host)
-  const [waitlistedParticipants, setWaitlistedParticipants] = useState<any[]>([]);
+  // Custom DB-backed waiting room panel (host only)
+  const [waitingGuests, setWaitingGuests] = useState<any[]>([]);
   const [showWaitlist, setShowWaitlist] = useState(false);
   const [knockNotification, setKnockNotification] = useState<string | null>(null);
 
+  const fetchWaitingGuests = useCallback(async () => {
+    if (!isHost || !meetingId) return;
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    try {
+      const r = await fetch(`https://api.vegvisr.org/realtime/waiting-room/list?meetingId=${encodeURIComponent(meetingId)}`, {
+        headers: { 'X-API-Token': stored.emailVerificationToken },
+      });
+      const data = await r.json();
+      if (data.success) {
+        const prev = waitingGuests.length;
+        setWaitingGuests(data.guests || []);
+        if ((data.guests || []).length > prev) {
+          setShowWaitlist(true);
+          const newest = data.guests[data.guests.length - 1];
+          setKnockNotification(`${newest.guest_name || newest.guest_email} is waiting to join`);
+        }
+      }
+    } catch { /* ignore */ }
+  }, [isHost, meetingId, waitingGuests.length]);
+
+  // Poll every 4 seconds when host is in meeting
   useEffect(() => {
-    if (!meeting?.participants?.waitlisted) return;
-    const updateWaitlist = () => {
-      const list: any[] = [];
-      meeting.participants.waitlisted.toArray().forEach((p: any) => list.push(p));
-      setWaitlistedParticipants(list);
-    };
-    const onParticipantKnocked = (participant: any) => {
-      console.log('[WaitingRoom] Knock! Participant entered waiting room:', participant?.name || participant?.id);
-      updateWaitlist();
-      setShowWaitlist(true);
-      const name = participant?.name || participant?.customParticipantId || 'Someone';
-      setKnockNotification(`${name} is waiting to join`);
-    };
-    updateWaitlist();
-    meeting.participants.waitlisted.on('participantJoined', onParticipantKnocked);
-    meeting.participants.waitlisted.on('participantLeft', updateWaitlist);
-    return () => {
-      meeting.participants.waitlisted.removeListener('participantJoined', onParticipantKnocked);
-      meeting.participants.waitlisted.removeListener('participantLeft', updateWaitlist);
-    };
-  }, [meeting]);
+    if (!isHost) return;
+    fetchWaitingGuests();
+    const iv = setInterval(fetchWaitingGuests, 4000);
+    return () => clearInterval(iv);
+  }, [isHost]);
+
+  const admitGuest = useCallback(async (guestEmail: string) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    await fetch('https://api.vegvisr.org/realtime/waiting-room/admit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Token': stored.emailVerificationToken },
+      body: JSON.stringify({ meetingId, guestEmail }),
+    });
+    setWaitingGuests((prev) => prev.filter((g) => g.guest_email !== guestEmail));
+  }, [meetingId]);
+
+  const denyGuest = useCallback(async (guestEmail: string) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    await fetch('https://api.vegvisr.org/realtime/waiting-room/deny', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Token': stored.emailVerificationToken },
+      body: JSON.stringify({ meetingId, guestEmail }),
+    });
+    setWaitingGuests((prev) => prev.filter((g) => g.guest_email !== guestEmail));
+  }, [meetingId]);
+
+  const admitAll = useCallback(async () => {
+    for (const g of waitingGuests) await admitGuest(g.guest_email);
+  }, [waitingGuests, admitGuest]);
 
   // Auto-dismiss knock notification after 6 seconds
   useEffect(() => {
@@ -200,40 +214,9 @@ function Meeting() {
     }
   }, [meeting, isPaused]);
 
-  const acceptParticipant = useCallback((id: string) => {
-    meeting?.participants?.acceptWaitingRoomRequest(id);
-  }, [meeting]);
-
-  const rejectParticipant = useCallback(async (id: string) => {
-    await meeting?.participants?.rejectWaitingRoomRequest(id);
-  }, [meeting]);
-
-  const acceptAll = useCallback(async () => {
-    if (!meeting?.participants?.waitlisted) return;
-    const ids = meeting.participants.waitlisted.toArray().map((p: any) => p.id);
-    if (ids.length > 0) {
-      await meeting.participants.acceptAllWaitingRoomRequest(ids);
-    }
-  }, [meeting]);
-
   if (!meeting) return <RtkSpinner />;
 
-  // Guest: waiting room — shown when preset has waiting room enabled
-  if (roomState === 'waitlisted') {
-    console.log('[WaitingRoom] RENDERING: waiting room screen (roomState=waitlisted)');
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-6 text-slate-200 p-8">
-        <div className="w-20 h-20 rounded-full bg-sky-900/50 flex items-center justify-center">
-          <span className="text-4xl">🕐</span>
-        </div>
-        <div className="text-center">
-          <h1 className="text-xl font-semibold">You're in the waiting room</h1>
-          <p className="text-sm text-slate-400 mt-2">The host will let you in soon</p>
-        </div>
-        <div className="w-8 h-8 border-3 border-sky-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
+
 
   if (roomState === 'ended' || roomState === 'left') {
     return (
@@ -251,9 +234,8 @@ function Meeting() {
     );
   }
   if (!roomJoined) {
-    // Auto-join when RTK is initialized — skip the setup screen entirely
     if (roomState === 'init' && meeting) {
-      (meeting as any).join().catch((e: any) => console.error('[WaitingRoom] auto-join error:', e));
+      (meeting as any).join().catch((e: any) => console.error('auto-join error:', e));
     }
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-slate-200">
@@ -334,66 +316,38 @@ function Meeting() {
               {selfName || 'You'} ✏️
             </button>
           )}
-          {/* Waitlist indicator + toggle */}
-          {waitlistedParticipants.length > 0 && (
+          {/* Waiting room indicator (host only) */}
+          {isHost && waitingGuests.length > 0 && (
             <button
               className={`relative ml-2 px-2 py-1 rounded text-white text-xs font-medium ${knockNotification ? 'bg-amber-500 animate-pulse ring-2 ring-amber-300' : 'bg-amber-600 hover:bg-amber-500'}`}
               onClick={() => setShowWaitlist(!showWaitlist)}
-              title={`${waitlistedParticipants.length} waiting`}
+              title={`${waitingGuests.length} waiting`}
             >
-              🖐 {waitlistedParticipants.length}
+              🖐 {waitingGuests.length}
             </button>
           )}
         </div>
       </header>
 
-      {/* Waitlist panel — floating overlay */}
-      {showWaitlist && waitlistedParticipants.length > 0 && (
+      {/* Custom DB-backed waiting room panel (host only) */}
+      {isHost && showWaitlist && waitingGuests.length > 0 && (
         <div className="absolute top-14 right-2 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl w-72 max-h-80 overflow-y-auto">
           <div className="flex items-center justify-between p-3 border-b border-slate-700">
-            <span className="text-sm font-medium text-slate-200">
-              Waiting Room ({waitlistedParticipants.length})
-            </span>
+            <span className="text-sm font-medium text-slate-200">Waiting Room ({waitingGuests.length})</span>
             <div className="flex items-center gap-2">
-              <button
-                className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-white text-xs"
-                onClick={acceptAll}
-              >
-                Accept All
-              </button>
-              <button
-                className="text-slate-500 hover:text-white text-sm"
-                onClick={() => setShowWaitlist(false)}
-              >
-                ✕
-              </button>
+              <button className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-white text-xs" onClick={admitAll}>Admit All</button>
+              <button className="text-slate-500 hover:text-white text-sm" onClick={() => setShowWaitlist(false)}>✕</button>
             </div>
           </div>
           <div className="p-2 flex flex-col gap-1">
-            {waitlistedParticipants.map((p: any) => (
-              <div key={p.id} className="flex items-center gap-2 px-2 py-2 rounded hover:bg-slate-700/50">
-                {p.picture ? (
-                  <img src={p.picture} alt="" className="w-8 h-8 rounded-full object-cover" />
-                ) : (
-                  <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center text-xs text-slate-300">
-                    {(p.name || '?')[0].toUpperCase()}
-                  </div>
-                )}
-                <span className="flex-1 text-sm text-slate-200 truncate">{p.name || p.customParticipantId || 'Guest'}</span>
-                <button
-                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-white text-xs"
-                  onClick={() => acceptParticipant(p.id)}
-                  title="Accept"
-                >
-                  ✓
-                </button>
-                <button
-                  className="px-2 py-1 bg-red-600 hover:bg-red-500 rounded text-white text-xs"
-                  onClick={() => rejectParticipant(p.id)}
-                  title="Deny"
-                >
-                  ✕
-                </button>
+            {waitingGuests.map((g: any) => (
+              <div key={g.guest_email} className="flex items-center gap-2 px-2 py-2 rounded hover:bg-slate-700/50">
+                <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center text-xs text-slate-300">
+                  {(g.guest_name || '?')[0].toUpperCase()}
+                </div>
+                <span className="flex-1 text-sm text-slate-200 truncate">{g.guest_name || g.guest_email}</span>
+                <button className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-white text-xs" onClick={() => admitGuest(g.guest_email)}>✓</button>
+                <button className="px-2 py-1 bg-red-600 hover:bg-red-500 rounded text-white text-xs" onClick={() => denyGuest(g.guest_email)}>✕</button>
               </div>
             ))}
           </div>
@@ -448,7 +402,62 @@ function Meeting() {
         </div>
         <div className="flex flex-1" />
       </footer>
-      <WaitingRoomPanel meeting={meeting} />
+
+    </div>
+  );
+}
+
+// ─── Guest Waiting Screen (polls DB until admitted/denied) ───────────────────
+
+function GuestWaitingScreen({
+  meetingId,
+  waitingScreenInfo,
+  onAdmitted,
+  onDenied,
+}: {
+  meetingId: string;
+  waitingScreenInfo: { meetingTitle?: string | null; hostName?: string | null; waitingImage?: string | null } | null;
+  onAdmitted: () => void;
+  onDenied: () => void;
+}) {
+  const stored = readStoredUser();
+  const guestEmail = stored?.email ?? '';
+
+  useEffect(() => {
+    if (!guestEmail) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const r = await fetch(
+          `https://api.vegvisr.org/realtime/waiting-room/status?meetingId=${encodeURIComponent(meetingId)}&guestEmail=${encodeURIComponent(guestEmail)}`
+        );
+        const data = await r.json();
+        if (cancelled) return;
+        if (data.status === 'admitted') { onAdmitted(); return; }
+        if (data.status === 'denied') { onDenied(); return; }
+      } catch { /* ignore */ }
+      if (!cancelled) setTimeout(poll, 3000);
+    };
+    const id = setTimeout(poll, 2000); // first poll after 2s
+    return () => { cancelled = true; clearTimeout(id); };
+  }, [meetingId, guestEmail]);
+
+  const info = waitingScreenInfo;
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-6 text-slate-200 p-8">
+      <div className="w-full max-w-sm bg-slate-800 border border-slate-700 rounded-xl p-6 flex flex-col items-center gap-5 shadow-xl text-center">
+        {info?.waitingImage && (
+          <img src={info.waitingImage} alt="" className="w-24 h-24 rounded-xl object-cover shadow-lg" />
+        )}
+        <div>
+          <h1 className="text-lg font-semibold">{info?.meetingTitle || 'Waiting to join…'}</h1>
+          {info?.hostName && (
+            <p className="text-sm text-slate-400 mt-1">Hosted by {info.hostName}</p>
+          )}
+        </div>
+        <div className="w-10 h-10 border-4 border-sky-500 border-t-transparent rounded-full animate-spin" />
+        <p className="text-sm text-slate-400">Waiting for the host to let you in</p>
+      </div>
     </div>
   );
 }
@@ -501,6 +510,13 @@ function RealtimeMeeting() {
   const [waitingRoomEnabled, setWaitingRoomEnabled] = useState(false);
   const [togglingWaitingRoom, setTogglingWaitingRoom] = useState(false);
   const [pendingMeetingId, setPendingMeetingId] = useState<string | null>(null);
+  // Guest waiting room state
+  const [guestWaiting, setGuestWaiting] = useState(false);
+  const [guestDenied, setGuestDenied] = useState(false);
+  const [knockingMeetingId, setKnockingMeetingId] = useState<string | null>(null);
+  // Active meeting tracking (set after joining, used by Meeting component)
+  const [activeMeetingId, setActiveMeetingId] = useState<string | null>(null);
+  const [isCallHost, setIsCallHost] = useState(false);
   const [displayName, setDisplayName] = useState(() => {
     const stored = readStoredUser();
     if (!stored?.email) return '';
@@ -536,6 +552,8 @@ function RealtimeMeeting() {
       const data = await r.json();
       if (!data.authToken) throw new Error(data.error || 'No token returned from server');
       console.log('[WaitingRoom] fetchTokenAndJoin: got authToken, calling initMeeting for meetingId:', meetingId);
+      setActiveMeetingId(meetingId);
+      setIsCallHost(!!data.isOwner || presetName === 'group_call_host');
       await initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
       console.log('[WaitingRoom] fetchTokenAndJoin: initMeeting resolved');
       setNoParams(false);
@@ -1059,6 +1077,29 @@ function RealtimeMeeting() {
   // Pre-join screen — shown when meetingId is in URL, BEFORE user clicks Join
   if (pendingMeetingId) {
     const info = waitingScreenInfo;
+    const doKnock = async () => {
+      const stored = readStoredUser();
+      if (!stored?.email) { setTokenError('You must be logged in to join this meeting.'); return; }
+      setJoining(true);
+      try {
+        await fetch('https://api.vegvisr.org/realtime/waiting-room/knock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            meetingId: pendingMeetingId,
+            guestEmail: stored.email,
+            guestName: displayName.trim() || stored.email.split('@')[0],
+          }),
+        });
+        setKnockingMeetingId(pendingMeetingId);
+        setPendingMeetingId(null);
+        setGuestWaiting(true);
+      } catch (err: any) {
+        setTokenError(err.message);
+      } finally {
+        setJoining(false);
+      }
+    };
     return (
       <div className="flex flex-col items-center justify-center h-full gap-6 text-slate-200 p-8">
         <div className="w-full max-w-sm bg-slate-800 border border-slate-700 rounded-xl p-6 flex flex-col gap-5 shadow-xl">
@@ -1078,27 +1119,51 @@ function RealtimeMeeting() {
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="Enter your name"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !joining) {
-                  setPendingMeetingId(null);
-                  fetchTokenAndJoin(pendingMeetingId);
-                }
-              }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !joining) doKnock(); }}
             />
           </div>
           {tokenError && <p className="text-red-400 text-sm">{tokenError}</p>}
           <button
             className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded text-white font-medium transition-colors"
             disabled={joining}
-            onClick={() => {
-              const id = pendingMeetingId;
-              setPendingMeetingId(null);
-              fetchTokenAndJoin(id);
-            }}
+            onClick={doKnock}
           >
             {joining ? 'Joining…' : 'Join Meeting'}
           </button>
         </div>
+      </div>
+    );
+  }
+
+  // Guest custom waiting room screen — polls DB until admitted or denied
+  if (guestWaiting && knockingMeetingId) {
+    return (
+      <GuestWaitingScreen
+        meetingId={knockingMeetingId}
+        waitingScreenInfo={waitingScreenInfo}
+        onAdmitted={() => {
+          setGuestWaiting(false);
+          fetchTokenAndJoin(knockingMeetingId!);
+        }}
+        onDenied={() => {
+          setGuestWaiting(false);
+          setGuestDenied(true);
+        }}
+      />
+    );
+  }
+
+  if (guestDenied) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-6 text-slate-200 p-8 text-center">
+        <p className="text-5xl">🚫</p>
+        <p className="text-lg font-medium">You were not admitted to this meeting.</p>
+        <button
+          className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-white text-sm"
+          onClick={() => { setGuestDenied(false); window.location.href = window.location.origin + window.location.pathname; }}
+        >
+          ← Back to Lobby
+        </button>
       </div>
     );
   }
@@ -1774,7 +1839,7 @@ function RealtimeMeeting() {
       <div className="flex-1 min-h-0">
         <RealtimeKitProvider value={meeting}>
           <RtkUiProvider meeting={meeting} showSetupScreen>
-            <Meeting />
+            <Meeting meetingId={activeMeetingId ?? ''} isHost={isCallHost} />
             <RtkDialogManager />
             <RtkSettings />
             <RtkParticipantsAudio />
