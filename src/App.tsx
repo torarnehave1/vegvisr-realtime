@@ -457,6 +457,7 @@ function RealtimeMeeting() {
     waitingRoomEnabled?: boolean | null;
     hostOnline?: boolean | null;
   } | null>(null);
+  const [directMeetingId, setDirectMeetingId] = useState<string | null>(null);
   // Pre-join state: when waiting room is on and host isn't in the meeting yet
   const [waitingForHost, setWaitingForHost] = useState(false);
   const [checkingHost, setCheckingHost] = useState(false);
@@ -1030,46 +1031,16 @@ function RealtimeMeeting() {
 
     // Meeting ID in URL — sequential flow:
     // 1. Fetch meeting info (title, host, waiting room config)
-    // 2. Always fetch token and join so the setup screen is shown first
+    // 2. Show Join screen first, then join on user action
     if (meetingId) {
-      const joinMeetingById = async (id: string) => {
-        // Step 1: Fetch meeting info
-        let meetingInfo: any = null;
+      setDirectMeetingId(meetingId);
+      (async () => {
         try {
-          const r = await fetch(`https://api.vegvisr.org/realtime/meeting-info?meetingId=${encodeURIComponent(id)}`);
-          meetingInfo = await r.json();
+          const r = await fetch(`https://api.vegvisr.org/realtime/meeting-info?meetingId=${encodeURIComponent(meetingId)}`);
+          const meetingInfo = await r.json();
           if (meetingInfo?.success) setWaitingScreenInfo(meetingInfo);
         } catch { /* ignore — proceed without info */ }
-
-        // Step 2: Fetch join token and initialize
-        const stored = readStoredUser();
-        if (!stored?.emailVerificationToken) {
-          setTokenError('You must be logged in to join this meeting.');
-          return;
-        }
-        try {
-          const r = await fetch('https://api.vegvisr.org/realtime/join-token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-API-Token': stored.emailVerificationToken },
-            body: JSON.stringify({
-              meetingId: id,
-              clientData: {
-                customParticipantId: stored.email,
-                name: displayName.trim() || stored.email.split('@')[0],
-              },
-            }),
-          });
-          const data = await r.json();
-          if (!data.authToken) throw new Error(data.error || 'No token returned from server');
-          console.log('[WaitingRoom] Got authToken from backend. Calling initMeeting...');
-          await initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
-          console.log('[WaitingRoom] initMeeting() resolved. Meeting initialized.');
-        } catch (err: any) {
-          setTokenError(err.message);
-        }
-      };
-
-      joinMeetingById(meetingId);
+      })();
       return;
     }
 
@@ -1683,6 +1654,42 @@ function RealtimeMeeting() {
         </div>
         )}
 
+      </div>
+    );
+  }
+
+  // Meeting not initialized yet — show Join screen for direct links
+  if (!meeting && directMeetingId) {
+    const wsTitle = waitingScreenInfo?.meetingTitle;
+    const wsHost = waitingScreenInfo?.hostName;
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-6 text-slate-200 p-8">
+        <div className="text-center">
+          {wsTitle ? (
+            <h1 className="text-2xl font-semibold">{wsTitle}</h1>
+          ) : (
+            <h1 className="text-2xl font-semibold">Join meeting</h1>
+          )}
+          {wsHost && (
+            <p className="text-sm text-slate-400 mt-2">Hosted by <span className="text-slate-200">{wsHost}</span></p>
+          )}
+        </div>
+        <div className="flex flex-col gap-3 w-full max-w-sm">
+          <label className="text-xs text-slate-400">Joining as</label>
+          <input
+            className="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="Your name"
+          />
+          <button
+            className="px-5 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded text-white font-medium"
+            disabled={joining}
+            onClick={() => fetchTokenAndJoin(directMeetingId)}
+          >
+            {joining ? 'Joining…' : 'Join'}
+          </button>
+        </div>
       </div>
     );
   }
