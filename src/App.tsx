@@ -51,6 +51,23 @@ function Meeting() {
 
   const canRecord = useRealtimeKitSelector((m) => m.self.permissions.canRecord);
 
+  // Debug: log every roomState and roomJoined change
+  useEffect(() => {
+    console.log('[WaitingRoom] roomState:', roomState, '| roomJoined:', roomJoined, '| selfName:', selfName);
+  }, [roomState, roomJoined, selfName]);
+
+  // Debug: log when meeting object changes
+  useEffect(() => {
+    if (!meeting) return;
+    console.log('[WaitingRoom] meeting initialized. self.waitListAndRoomWaitingInfo:', (meeting as any)?.self?.waitListAndRoomWaitingInfo);
+    console.log('[WaitingRoom] meeting.self:', {
+      id: (meeting as any)?.self?.id,
+      presetId: (meeting as any)?.self?.presetId,
+      waitlisted: (meeting as any)?.self?.waitlisted,
+      roomState: (meeting as any)?.self?.roomState,
+    });
+  }, [meeting]);
+
   // Waitlist management (host)
   const [waitlistedParticipants, setWaitlistedParticipants] = useState<any[]>([]);
   const [showWaitlist, setShowWaitlist] = useState(false);
@@ -187,6 +204,7 @@ function Meeting() {
 
   // Guest: waiting room — shown when preset has waiting room enabled
   if (roomState === 'waitlisted') {
+    console.log('[WaitingRoom] RENDERING: waiting room screen (roomState=waitlisted)');
     return (
       <div className="flex flex-col items-center justify-center h-full gap-6 text-slate-200 p-8">
         <div className="w-20 h-20 rounded-full bg-sky-900/50 flex items-center justify-center">
@@ -216,7 +234,10 @@ function Meeting() {
       </div>
     );
   }
-  if (!roomJoined) return <RtkSetupScreen meeting={meeting} />;
+  if (!roomJoined) {
+    console.log('[WaitingRoom] RENDERING: setup screen (roomJoined=false, roomState=' + roomState + ')');
+    return <RtkSetupScreen meeting={meeting} />;
+  }
 
   return (
     <div
@@ -467,7 +488,9 @@ function RealtimeMeeting() {
       });
       const data = await r.json();
       if (!data.authToken) throw new Error(data.error || 'No token returned from server');
+      console.log('[WaitingRoom] fetchTokenAndJoin: got authToken, calling initMeeting for meetingId:', meetingId);
       await initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
+      console.log('[WaitingRoom] fetchTokenAndJoin: initMeeting resolved');
       setNoParams(false);
     } catch (err: any) {
       setTokenError(err.message);
@@ -966,7 +989,9 @@ function RealtimeMeeting() {
         .then((r) => r.json())
         .then(async (data) => {
           if (!data.authToken) throw new Error(data.error || 'No token returned from server');
+          console.log('[WaitingRoom] Got authToken from backend. Calling initMeeting...');
           await initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
+          console.log('[WaitingRoom] initMeeting() resolved. Meeting initialized.');
         })
         .catch((err) => setTokenError(err.message));
       return;
