@@ -5,13 +5,25 @@ export function WaitingRoomPanel({ meeting }: { meeting: any }) {
   const [list, setList] = useState<any[]>([]);
 
   useEffect(() => {
-    if (!meeting?.participants?.waitlisted) return;
+    console.log('[WaitingRoom] WaitingRoomPanel mounted. meeting.participants.waitlisted:', meeting?.participants?.waitlisted);
+    if (!meeting?.participants?.waitlisted) {
+      console.warn('[WaitingRoom] waitlisted is not available on meeting object');
+      return;
+    }
     const refresh = () => {
-      setList(meeting.participants.waitlisted.toArray());
+      const arr = meeting.participants.waitlisted.toArray();
+      console.log('[WaitingRoom] waitlist updated. count:', arr.length, '| participants:', arr.map((p: any) => ({ id: p.id, name: p.name })));
+      setList(arr);
     };
     refresh();
-    meeting.participants.waitlisted.on('participantJoined', refresh);
-    meeting.participants.waitlisted.on('participantLeft', refresh);
+    meeting.participants.waitlisted.on('participantJoined', (p: any) => {
+      console.log('[WaitingRoom] EVENT participantJoined waiting room:', { id: p?.id, name: p?.name });
+      refresh();
+    });
+    meeting.participants.waitlisted.on('participantLeft', (p: any) => {
+      console.log('[WaitingRoom] EVENT participantLeft waiting room:', { id: p?.id, name: p?.name });
+      refresh();
+    });
     return () => {
       meeting.participants.waitlisted.removeListener('participantJoined', refresh);
       meeting.participants.waitlisted.removeListener('participantLeft', refresh);
@@ -32,7 +44,7 @@ export function WaitingRoomPanel({ meeting }: { meeting: any }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
             <span style={{ color: 'white', fontWeight: 600 }}>Waiting Room</span>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => setList(meeting.participants.waitlisted.toArray())} style={{ background: '#1d4ed8', border: 'none', color: 'white', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 12 }}>Refresh</button>
+              <button onClick={() => { const arr = meeting.participants.waitlisted.toArray(); console.log('[WaitingRoom] Manual refresh. count:', arr.length, arr.map((p: any) => ({ id: p.id, name: p.name }))); setList(arr); }} style={{ background: '#1d4ed8', border: 'none', color: 'white', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 12 }}>Refresh</button>
               <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>✕</button>
             </div>
           </div>
@@ -40,8 +52,8 @@ export function WaitingRoomPanel({ meeting }: { meeting: any }) {
           {list.map((p) => (
             <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <span style={{ flex: 1, color: '#e2e8f0', fontSize: 13 }}>{p.name || 'Guest'}</span>
-              <button onClick={() => meeting.participants.acceptWaitingRoomRequest(p.id)} style={{ background: '#059669', color: 'white', border: 'none', borderRadius: 4, padding: '3px 8px', cursor: 'pointer', fontSize: 12 }}>Accept</button>
-              <button onClick={() => meeting.participants.rejectWaitingRoomRequest(p.id)} style={{ background: '#dc2626', color: 'white', border: 'none', borderRadius: 4, padding: '3px 8px', cursor: 'pointer', fontSize: 12 }}>Deny</button>
+              <button onClick={() => { console.log('[WaitingRoom] ACCEPT clicked for:', { id: p.id, name: p.name }); meeting.participants.acceptWaitingRoomRequest(p.id); }} style={{ background: '#059669', color: 'white', border: 'none', borderRadius: 4, padding: '3px 8px', cursor: 'pointer', fontSize: 12 }}>Accept</button>
+              <button onClick={() => { console.log('[WaitingRoom] DENY clicked for:', { id: p.id, name: p.name }); meeting.participants.rejectWaitingRoomRequest(p.id); }} style={{ background: '#dc2626', color: 'white', border: 'none', borderRadius: 4, padding: '3px 8px', cursor: 'pointer', fontSize: 12 }}>Deny</button>
             </div>
           ))}
         </div>
