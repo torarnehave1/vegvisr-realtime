@@ -71,6 +71,7 @@ function Meeting() {
   // Waitlist management (host)
   const [waitlistedParticipants, setWaitlistedParticipants] = useState<any[]>([]);
   const [showWaitlist, setShowWaitlist] = useState(false);
+  const [knockNotification, setKnockNotification] = useState<string | null>(null);
 
   useEffect(() => {
     if (!meeting?.participants?.waitlisted) return;
@@ -79,14 +80,28 @@ function Meeting() {
       meeting.participants.waitlisted.toArray().forEach((p: any) => list.push(p));
       setWaitlistedParticipants(list);
     };
+    const onParticipantKnocked = (participant: any) => {
+      console.log('[WaitingRoom] Knock! Participant entered waiting room:', participant?.name || participant?.id);
+      updateWaitlist();
+      setShowWaitlist(true);
+      const name = participant?.name || participant?.customParticipantId || 'Someone';
+      setKnockNotification(`${name} is waiting to join`);
+    };
     updateWaitlist();
-    meeting.participants.waitlisted.on('participantJoined', updateWaitlist);
+    meeting.participants.waitlisted.on('participantJoined', onParticipantKnocked);
     meeting.participants.waitlisted.on('participantLeft', updateWaitlist);
     return () => {
-      meeting.participants.waitlisted.removeListener('participantJoined', updateWaitlist);
+      meeting.participants.waitlisted.removeListener('participantJoined', onParticipantKnocked);
       meeting.participants.waitlisted.removeListener('participantLeft', updateWaitlist);
     };
   }, [meeting]);
+
+  // Auto-dismiss knock notification after 6 seconds
+  useEffect(() => {
+    if (!knockNotification) return;
+    const timer = setTimeout(() => setKnockNotification(null), 6000);
+    return () => clearTimeout(timer);
+  }, [knockNotification]);
 
   const [states, updateStates] = useReducer(
     (state: any, payload: any) => ({ ...state, ...payload }),
@@ -246,6 +261,22 @@ function Meeting() {
         el?.addEventListener('rtkStateUpdate', (e: any) => updateStates(e.detail));
       }}
     >
+      {/* Knock notification banner — auto-dismisses after 6 seconds */}
+      {knockNotification && (
+        <div className="flex items-center justify-between gap-2 px-3 py-2 bg-amber-700 text-white text-sm font-medium">
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-3 h-3 rounded-full bg-amber-300 animate-ping" />
+            <span>🖐 {knockNotification}</span>
+          </div>
+          <button
+            className="px-2 py-0.5 bg-amber-500 hover:bg-amber-400 rounded text-white text-xs ml-2"
+            onClick={() => { setKnockNotification(null); setShowWaitlist(true); }}
+          >
+            View →
+          </button>
+        </div>
+      )}
+
       {/* Recording warning banner — shown for 3 seconds */}
       {showRecordingBanner && (
         <div className="flex items-center justify-center gap-2 px-3 py-2 bg-red-700 text-white text-sm font-medium animate-pulse">
@@ -297,7 +328,7 @@ function Meeting() {
           {/* Waitlist indicator + toggle */}
           {waitlistedParticipants.length > 0 && (
             <button
-              className="relative ml-2 px-2 py-1 bg-amber-600 hover:bg-amber-500 rounded text-white text-xs font-medium"
+              className={`relative ml-2 px-2 py-1 rounded text-white text-xs font-medium ${knockNotification ? 'bg-amber-500 animate-pulse ring-2 ring-amber-300' : 'bg-amber-600 hover:bg-amber-500'}`}
               onClick={() => setShowWaitlist(!showWaitlist)}
               title={`${waitlistedParticipants.length} waiting`}
             >
