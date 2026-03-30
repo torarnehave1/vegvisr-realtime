@@ -28,7 +28,6 @@ import {
 import { AuthBar, EcosystemNav } from 'vegvisr-ui-kit';
 import { readStoredUser, type AuthUser } from './lib/auth';
 import { Login } from './components/Login';
-import { WaitingRoomPanel } from './components/WaitingRoomPanel';
 
 const MAGIC_BASE = 'https://cookie.vegvisr.org';
 const DASHBOARD_BASE = 'https://dashboard.vegvisr.org';
@@ -440,7 +439,6 @@ function Meeting() {
         </div>
         <div className="flex flex-1" />
       </footer>
-      <WaitingRoomPanel meeting={meeting} />
     </div>
   );
 }
