@@ -31,7 +31,10 @@ export function WaitingRoomPanel({ meeting }: { meeting: any }) {
         <div style={{ position: 'fixed', bottom: 130, right: 20, zIndex: 1000, width: 280, background: '#1e293b', border: '1px solid #334155', borderRadius: 8, padding: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
             <span style={{ color: 'white', fontWeight: 600 }}>Waiting Room</span>
-            <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>✕</button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => setList(meeting.participants.waitlisted.toArray())} style={{ background: '#1d4ed8', border: 'none', color: 'white', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 12 }}>Refresh</button>
+              <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>✕</button>
+            </div>
           </div>
           {list.length === 0 && <p style={{ color: '#64748b', fontSize: 13 }}>No one waiting</p>}
           {list.map((p) => (
