@@ -251,8 +251,16 @@ function Meeting() {
     );
   }
   if (!roomJoined) {
-    console.log('[WaitingRoom] RENDERING: setup screen (roomJoined=false, roomState=' + roomState + ')');
-    return <RtkSetupScreen meeting={meeting} />;
+    // Auto-join when RTK is initialized — skip the setup screen entirely
+    if (roomState === 'init' && meeting) {
+      (meeting as any).join().catch((e: any) => console.error('[WaitingRoom] auto-join error:', e));
+    }
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4 text-slate-200">
+        <div className="w-8 h-8 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" />
+        <p className="text-sm text-slate-400">Joining…</p>
+      </div>
+    );
   }
 
   return (
