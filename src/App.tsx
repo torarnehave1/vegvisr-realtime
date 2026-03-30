@@ -69,22 +69,31 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
       });
       const data = await r.json();
       if (data.success) {
-        const prev = waitingGuests.length;
-        setWaitingGuests(data.guests || []);
-        if ((data.guests || []).length > prev) {
-          setShowWaitlist(true);
-          const newest = data.guests[data.guests.length - 1];
-          setKnockNotification(`${newest.guest_name || newest.guest_email} is waiting to join`);
-        }
+        const incoming = data.guests || [];
+        setWaitingGuests((prev) => {
+          // show notification only when count goes up
+          if (incoming.length > prev.length && incoming.length > 0) {
+            const newest = incoming[incoming.length - 1];
+            setKnockNotification(`${newest.guest_name || newest.guest_email} is waiting to join`);
+            setShowWaitlist(true);
+          }
+          // auto-open panel whenever there are guests
+          if (incoming.length > 0) setShowWaitlist(true);
+          return incoming;
+        });
       }
     } catch { /* ignore */ }
-  }, [isHost, meetingId, waitingGuests.length]);
+  }, [isHost, meetingId]);
+
+  // Keep a ref so the interval always calls the latest version
+  const fetchWaitingGuestsRef = React.useRef(fetchWaitingGuests);
+  fetchWaitingGuestsRef.current = fetchWaitingGuests;
 
   // Poll every 4 seconds when host is in meeting
   useEffect(() => {
     if (!isHost) return;
-    fetchWaitingGuests();
-    const iv = setInterval(fetchWaitingGuests, 4000);
+    fetchWaitingGuestsRef.current();
+    const iv = setInterval(() => fetchWaitingGuestsRef.current(), 4000);
     return () => clearInterval(iv);
   }, [isHost]);
 
@@ -320,12 +329,12 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
               {selfName || 'You'} ✏️
             </button>
           )}
-          {/* Waiting room indicator (host only) */}
-          {isHost && waitingGuests.length > 0 && (
+          {/* Waiting room indicator (host only) — always visible so host can manually check */}
+          {isHost && (
             <button
-              className={`relative ml-2 px-2 py-1 rounded text-white text-xs font-medium ${knockNotification ? 'bg-amber-500 animate-pulse ring-2 ring-amber-300' : 'bg-amber-600 hover:bg-amber-500'}`}
-              onClick={() => setShowWaitlist(!showWaitlist)}
-              title={`${waitingGuests.length} waiting`}
+              className={`relative ml-2 px-2 py-1 rounded text-white text-xs font-medium ${waitingGuests.length > 0 ? (knockNotification ? 'bg-amber-500 animate-pulse ring-2 ring-amber-300' : 'bg-amber-600 hover:bg-amber-500') : 'bg-slate-600 hover:bg-slate-500'}`}
+              onClick={() => { fetchWaitingGuestsRef.current(); setShowWaitlist(!showWaitlist); }}
+              title={waitingGuests.length > 0 ? `${waitingGuests.length} waiting` : 'Waiting room (click to check)'}
             >
               🖐 {waitingGuests.length}
             </button>
