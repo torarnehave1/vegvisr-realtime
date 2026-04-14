@@ -22,7 +22,7 @@ export const Login: React.FC<LoginProps> = () => {
     setIsLoading(true);
 
     try {
-      const redirectUrl = `${window.location.origin}${window.location.pathname}`;
+      const redirectUrl = window.location.href;
       const res = await fetch(`${MAGIC_BASE}/login/magic/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

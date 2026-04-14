@@ -1928,7 +1928,18 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       const userContext = await fetchUserContext(data.email);
       persistUser(userContext);
     } catch {
-      persistUser({ email: data.email, role: 'user', user_id: data.email, emailVerificationToken: null });
+      // User not found — auto-register as Realtime user, then fetch their context
+      try {
+        await fetch(`${DASHBOARD_BASE}/register-realtime-user`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: data.email }),
+        });
+        const userContext = await fetchUserContext(data.email);
+        persistUser(userContext);
+      } catch {
+        persistUser({ email: data.email, role: 'user', user_id: data.email, emailVerificationToken: null });
+      }
     }
   };
 
