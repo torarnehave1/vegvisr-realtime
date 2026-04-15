@@ -536,6 +536,12 @@ function RealtimeMeeting() {
     return stored.email.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   });
 
+  // Only Admin and Superadmin can create / own meeting rooms
+  const canCreateMeetings = (() => {
+    const r = (readStoredUser()?.role || '').trim().toLowerCase();
+    return r === 'admin' || r === 'superadmin';
+  })();
+
   const fetchTokenAndJoin = async (
     meetingId: string,
     presetName?: string,
@@ -1238,8 +1244,8 @@ function RealtimeMeeting() {
           />
         </div>
 
-        {/* Permanent Rooms */}
-        {(myRooms.personalMeetingId || myRooms.teamMeetingId) ? (
+        {/* Permanent Rooms — Admin/Superadmin only */}
+        {canCreateMeetings && (myRooms.personalMeetingId || myRooms.teamMeetingId) ? (
           <div className="flex flex-col gap-2 w-full max-w-sm">
             {myRooms.personalMeetingId && (
               <div className="flex items-center gap-2">
@@ -1346,7 +1352,7 @@ function RealtimeMeeting() {
               </div>
             )}
           </div>
-        ) : (
+        ) : canCreateMeetings ? (
           <button
             className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-white text-sm w-full max-w-sm disabled:opacity-40"
             disabled={provisioningRooms}
@@ -1354,10 +1360,10 @@ function RealtimeMeeting() {
           >
             {provisioningRooms ? 'Setting up…' : '🔧 Set Up My Permanent Rooms'}
           </button>
-        )}
+        ) : null}
 
-        {/* Waiting Room & Screen Settings */}
-        {(myRooms.personalMeetingId || myRooms.teamMeetingId) && (
+        {/* Waiting Room & Screen Settings — Admin/Superadmin only */}
+        {canCreateMeetings && (myRooms.personalMeetingId || myRooms.teamMeetingId) && (
           <div className="w-full max-w-sm flex flex-col gap-2">
             {/* Waiting Room Toggle */}
             <div className="flex items-center justify-between bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2.5">
@@ -1456,14 +1462,16 @@ function RealtimeMeeting() {
           </div>
         )}
 
-        {/* Create Meeting */}
-        <button
-          className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-white font-medium disabled:opacity-40 w-full max-w-sm"
-          disabled={joining}
-          onClick={createMeeting}
-        >
-          {joining && !manualMeetingId.trim() ? 'Creating…' : '+ Create Meeting'}
-        </button>
+        {/* Create Meeting — Admin/Superadmin only */}
+        {canCreateMeetings && (
+          <button
+            className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-white font-medium disabled:opacity-40 w-full max-w-sm"
+            disabled={joining}
+            onClick={createMeeting}
+          >
+            {joining && !manualMeetingId.trim() ? 'Creating…' : '+ Create Meeting'}
+          </button>
+        )}
 
         {/* Invite link (shown after creating) */}
         {inviteLink && (
