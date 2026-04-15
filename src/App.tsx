@@ -493,6 +493,10 @@ function RealtimeMeeting() {
   const [joining, setJoining] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteSending, setInviteSending] = useState(false);
+  const [inviteSent, setInviteSent] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
   const [pastMeetings, setPastMeetings] = useState<any[]>([]);
   const [loadingMeetings, setLoadingMeetings] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -654,6 +658,28 @@ function RealtimeMeeting() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
+  };
+
+  const sendEmailInvite = async () => {
+    if (!inviteEmail.trim() || !inviteLink) return;
+    setInviteSending(true);
+    setInviteError(null);
+    try {
+      const res = await fetch(`${MAGIC_BASE}/login/magic/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: inviteEmail.trim(), redirectUrl: inviteLink }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Failed to send invite');
+      setInviteSent(true);
+      setInviteEmail('');
+      setTimeout(() => setInviteSent(false), 4000);
+    } catch (err: any) {
+      setInviteError(err.message);
+    } finally {
+      setInviteSending(false);
+    }
   };
 
   const fetchMyRooms = async () => {
@@ -1493,6 +1519,28 @@ function RealtimeMeeting() {
                 {copied ? '✓ Copied' : 'Copy'}
               </button>
             </div>
+            {/* Email invite */}
+            <div className="flex flex-col gap-1 mt-1">
+              <p className="text-xs text-slate-400">Or send an email invitation:</p>
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-xs placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                  placeholder="guest@example.com"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && !inviteSending && sendEmailInvite()}
+                />
+                <button
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-white text-xs whitespace-nowrap disabled:opacity-40"
+                  disabled={!inviteEmail.trim() || inviteSending}
+                  onClick={sendEmailInvite}
+                >
+                  {inviteSending ? 'Sending…' : inviteSent ? '✓ Sent!' : 'Send Invite'}
+                </button>
+              </div>
+              {inviteError && <p className="text-xs text-red-400">{inviteError}</p>}
+            </div>
           </div>
         )}
 
@@ -1831,29 +1879,50 @@ function RealtimeMeeting() {
   return (
     <div className="flex flex-col w-full h-full">
       {inviteLink && (
-        <div className="flex items-center gap-2 px-3 py-2 bg-slate-800 border-b border-slate-700 text-sm">
-          <span className="text-slate-400 text-xs whitespace-nowrap">Invite link:</span>
-          <input
-            type="text"
-            readOnly
-            aria-label="Invite link"
-            value={inviteLink}
-            className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-xs font-mono focus:outline-none select-all min-w-0"
-            onFocus={(e) => e.target.select()}
-          />
-          <button
-            className="px-3 py-1 bg-sky-600 hover:bg-sky-500 rounded text-white text-xs whitespace-nowrap"
-            onClick={copyInviteLink}
-          >
-            {copied ? '✓ Copied' : 'Copy'}
-          </button>
-          <button
-            className="px-2 py-1 text-slate-500 hover:text-white text-xs"
-            onClick={() => setInviteLink(null)}
-            title="Dismiss"
-          >
-            ✕
-          </button>
+        <div className="flex flex-col gap-1.5 px-3 py-2 bg-slate-800 border-b border-slate-700 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400 text-xs whitespace-nowrap">Invite link:</span>
+            <input
+              type="text"
+              readOnly
+              aria-label="Invite link"
+              value={inviteLink}
+              className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-xs font-mono focus:outline-none select-all min-w-0"
+              onFocus={(e) => e.target.select()}
+            />
+            <button
+              className="px-3 py-1 bg-sky-600 hover:bg-sky-500 rounded text-white text-xs whitespace-nowrap"
+              onClick={copyInviteLink}
+            >
+              {copied ? '✓ Copied' : 'Copy'}
+            </button>
+            <button
+              className="px-2 py-1 text-slate-500 hover:text-white text-xs"
+              onClick={() => setInviteLink(null)}
+              title="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500 text-xs whitespace-nowrap">Email invite:</span>
+            <input
+              type="email"
+              className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-xs placeholder-slate-500 focus:outline-none focus:border-emerald-500 min-w-0"
+              placeholder="guest@example.com"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && !inviteSending && sendEmailInvite()}
+            />
+            <button
+              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-white text-xs whitespace-nowrap disabled:opacity-40"
+              disabled={!inviteEmail.trim() || inviteSending}
+              onClick={sendEmailInvite}
+            >
+              {inviteSending ? 'Sending…' : inviteSent ? '✓ Sent!' : 'Send Invite'}
+            </button>
+          </div>
+          {inviteError && <p className="text-xs text-red-400 px-1">{inviteError}</p>}
         </div>
       )}
       <div className="flex-1 min-h-0">
