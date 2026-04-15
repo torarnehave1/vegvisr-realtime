@@ -1978,9 +1978,27 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let isMounted = true;
     const stored = readStoredUser();
-    if (stored && isMounted) {
-      setAuthUser(stored);
-      setAuthStatus('authed');
+    if (stored?.email) {
+      // Validate stored user still exists in DB — clears stale cache if deleted
+      fetch(`${DASHBOARD_BASE}/get-role?email=${encodeURIComponent(stored.email)}`)
+        .then(res => {
+          if (!isMounted) return;
+          if (res.ok) {
+            setAuthUser(stored);
+            setAuthStatus('authed');
+          } else {
+            // User removed from DB — clear cache and force re-login
+            try { localStorage.removeItem('user'); } catch { /* ignore */ }
+            setAuthUser(null);
+            setAuthStatus('anonymous');
+          }
+        })
+        .catch(() => {
+          if (!isMounted) return;
+          // Network error — trust cache to avoid locking out on flaky connection
+          setAuthUser(stored);
+          setAuthStatus('authed');
+        });
     } else if (isMounted) {
       setAuthStatus('anonymous');
     }
