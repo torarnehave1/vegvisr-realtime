@@ -665,10 +665,12 @@ function RealtimeMeeting() {
     setInviteSending(true);
     setInviteError(null);
     try {
+      const stored = readStoredUser();
+      const inviterName = stored?.displayName || stored?.email || undefined;
       const res = await fetch(`${MAGIC_BASE}/login/magic/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: inviteEmail.trim(), redirectUrl: inviteLink }),
+        body: JSON.stringify({ email: inviteEmail.trim(), redirectUrl: inviteLink, inviterName }),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || 'Failed to send invite');
@@ -1114,6 +1116,14 @@ function RealtimeMeeting() {
     }
 
     // No params — show the lobby
+    // Pre-fill invite email if coming from Contacts app
+    const inviteEmailParam = searchParams.get('inviteEmail');
+    if (inviteEmailParam) {
+      setInviteEmail(decodeURIComponent(inviteEmailParam));
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete('inviteEmail');
+      window.history.replaceState({}, '', cleanUrl.toString());
+    }
     setNoParams(true);
     fetchMyRooms();
   }, []);
