@@ -35,6 +35,59 @@ const DASHBOARD_BASE = 'https://dashboard.vegvisr.org';
 
 const AuthContext = createContext<AuthUser | null>(null);
 
+type StandardRoom = {
+  id: string;
+  kind?: string | null;
+  title?: string | null;
+};
+
+type MyRoomsState = {
+  personalMeetingId: string | null;
+  teamMeetingId: string | null;
+  standardRooms: StandardRoom[];
+};
+
+const normalizeStandardRooms = (data: any): StandardRoom[] => {
+  const source = Array.isArray(data?.standardRooms)
+    ? data.standardRooms
+    : Array.isArray(data?.rooms)
+      ? data.rooms
+      : [];
+
+  const seen = new Set<string>();
+  const rooms: StandardRoom[] = [];
+
+  for (const room of source) {
+    const id = typeof room?.id === 'string'
+      ? room.id
+      : typeof room?.meetingId === 'string'
+        ? room.meetingId
+        : null;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    rooms.push({
+      id,
+      kind: typeof room?.kind === 'string' ? room.kind : null,
+      title: typeof room?.title === 'string' ? room.title : null,
+    });
+  }
+
+  const addLegacyRoom = (id: unknown, kind: string, title: unknown) => {
+    if (typeof id !== 'string' || !id || seen.has(id)) return;
+    seen.add(id);
+    rooms.push({
+      id,
+      kind,
+      title: typeof title === 'string' ? title : null,
+    });
+  };
+
+  addLegacyRoom(data?.personalMeetingId, 'personal', data?.personalTitle);
+  addLegacyRoom(data?.teamMeetingId, 'team', data?.teamTitle);
+
+  return rooms;
+};
+
 // ─── Meeting UI ──────────────────────────────────────────────────────────────
 
 const config = { ...defaultConfig };
@@ -500,13 +553,12 @@ function RealtimeMeeting() {
   const [pastMeetings, setPastMeetings] = useState<any[]>([]);
   const [loadingMeetings, setLoadingMeetings] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [myRooms, setMyRooms] = useState<{ personalMeetingId: string | null; teamMeetingId: string | null }>({ personalMeetingId: null, teamMeetingId: null });
+  const [myRooms, setMyRooms] = useState<MyRoomsState>({ personalMeetingId: null, teamMeetingId: null, standardRooms: [] });
   const [provisioningRooms, setProvisioningRooms] = useState(false);
-  const [editingRoomTitle, setEditingRoomTitle] = useState<'personal' | 'team' | null>(null);
+  const [editingRoomTitle, setEditingRoomTitle] = useState<string | null>(null);
   const [roomTitleDraft, setRoomTitleDraft] = useState('');
   const [savingTitle, setSavingTitle] = useState(false);
-  const [personalRoomTitle, setPersonalRoomTitle] = useState<string | null>(null);
-  const [teamRoomTitle, setTeamRoomTitle] = useState<string | null>(null);
+  const [roomTitles, setRoomTitles] = useState<Record<string, string>>({});
   const [recordings, setRecordings] = useState<any[]>([]);
   const [loadingRecordings, setLoadingRecordings] = useState(false);
   const [syncingRecordings, setSyncingRecordings] = useState(false);
@@ -545,6 +597,27 @@ function RealtimeMeeting() {
     const r = (readStoredUser()?.role || '').trim().toLowerCase();
     return r === 'admin' || r === 'superadmin';
   })();
+
+  const standardRooms = myRooms.standardRooms;
+  const hasStandardRooms = standardRooms.length > 0;
+
+  const getRoomLabel = (room: StandardRoom, index: number) => {
+    if (room.kind === 'personal') return '🏠 My Room';
+    if (room.kind === 'team') return '👥 Team Room';
+    return `🗂️ Room ${index + 1}`;
+  };
+
+  const getRoomButtonClass = (room: StandardRoom, index: number) => {
+    if (room.kind === 'personal') return 'bg-violet-700 hover:bg-violet-600';
+    if (room.kind === 'team') return 'bg-indigo-700 hover:bg-indigo-600';
+    return index % 2 === 0 ? 'bg-cyan-700 hover:bg-cyan-600' : 'bg-emerald-700 hover:bg-emerald-600';
+  };
+
+  const getRoomSubtitleClass = (room: StandardRoom, index: number) => {
+    if (room.kind === 'personal') return 'text-violet-200';
+    if (room.kind === 'team') return 'text-indigo-200';
+    return index % 2 === 0 ? 'text-cyan-200' : 'text-emerald-200';
+  };
 
   const fetchTokenAndJoin = async (
     meetingId: string,
@@ -665,12 +738,10 @@ function RealtimeMeeting() {
     setInviteSending(true);
     setInviteError(null);
     try {
-      const stored = readStoredUser();
-      const inviterName = stored?.displayName || stored?.email || undefined;
       const res = await fetch(`${MAGIC_BASE}/login/magic/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: inviteEmail.trim(), redirectUrl: inviteLink, inviterName }),
+        body: JSON.stringify({ email: inviteEmail.trim(), redirectUrl: inviteLink }),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || 'Failed to send invite');
@@ -693,9 +764,18 @@ function RealtimeMeeting() {
       });
       const data = await r.json();
       if (data.success) {
-        setMyRooms({ personalMeetingId: data.personalMeetingId, teamMeetingId: data.teamMeetingId });
-        if (data.personalTitle) setPersonalRoomTitle(data.personalTitle);
-        if (data.teamTitle) setTeamRoomTitle(data.teamTitle);
+        const normalizedRooms = normalizeStandardRooms(data);
+        setMyRooms({
+          personalMeetingId: data.personalMeetingId ?? null,
+          teamMeetingId: data.teamMeetingId ?? null,
+          standardRooms: normalizedRooms,
+        });
+        setRoomTitles(
+          normalizedRooms.reduce<Record<string, string>>((acc, room) => {
+            if (room.title) acc[room.id] = room.title;
+            return acc;
+          }, {})
+        );
         // Load waiting screen config
         if (data.waitingScreen) {
           if (data.waitingScreen.title) setWaitingTitle(data.waitingScreen.title);
@@ -735,7 +815,18 @@ function RealtimeMeeting() {
       });
       const data = await r.json();
       if (data.success) {
-        setMyRooms({ personalMeetingId: data.personalMeetingId, teamMeetingId: data.teamMeetingId });
+        const normalizedRooms = normalizeStandardRooms(data);
+        setMyRooms({
+          personalMeetingId: data.personalMeetingId ?? null,
+          teamMeetingId: data.teamMeetingId ?? null,
+          standardRooms: normalizedRooms,
+        });
+        setRoomTitles(
+          normalizedRooms.reduce<Record<string, string>>((acc, room) => {
+            if (room.title) acc[room.id] = room.title;
+            return acc;
+          }, {})
+        );
       }
     } catch { /* ignore */ }
     finally { setProvisioningRooms(false); }
@@ -793,8 +884,14 @@ function RealtimeMeeting() {
       });
       const data = await r.json();
       if (data.success) {
-        if (meetingId === myRooms.personalMeetingId) setPersonalRoomTitle(data.title);
-        if (meetingId === myRooms.teamMeetingId) setTeamRoomTitle(data.title);
+        const nextTitle = typeof data.title === 'string' ? data.title : title;
+        setRoomTitles((prev) => ({ ...prev, [meetingId]: nextTitle }));
+        setMyRooms((prev) => ({
+          ...prev,
+          standardRooms: prev.standardRooms.map((room) =>
+            room.id === meetingId ? { ...room, title: nextTitle } : room
+          ),
+        }));
       }
     } catch { /* ignore */ }
     finally {
@@ -1116,14 +1213,6 @@ function RealtimeMeeting() {
     }
 
     // No params — show the lobby
-    // Pre-fill invite email if coming from Contacts app
-    const inviteEmailParam = searchParams.get('inviteEmail');
-    if (inviteEmailParam) {
-      setInviteEmail(decodeURIComponent(inviteEmailParam));
-      const cleanUrl = new URL(window.location.href);
-      cleanUrl.searchParams.delete('inviteEmail');
-      window.history.replaceState({}, '', cleanUrl.toString());
-    }
     setNoParams(true);
     fetchMyRooms();
   }, []);
@@ -1280,36 +1369,36 @@ function RealtimeMeeting() {
           />
         </div>
 
-        {/* Permanent Rooms — Admin/Superadmin only */}
-        {canCreateMeetings && (myRooms.personalMeetingId || myRooms.teamMeetingId) ? (
+        {/* Standard Rooms — Admin/Superadmin only */}
+        {canCreateMeetings && hasStandardRooms ? (
           <div className="flex flex-col gap-2 w-full max-w-sm">
-            {myRooms.personalMeetingId && (
+            {standardRooms.map((room, index) => (
+              <React.Fragment key={room.id}>
               <div className="flex items-center gap-2">
                 <button
-                  className="flex-1 px-4 py-3 bg-violet-700 hover:bg-violet-600 rounded-lg text-white font-medium disabled:opacity-40 text-left"
+                  className={`flex-1 px-4 py-3 rounded-lg text-white font-medium disabled:opacity-40 text-left ${getRoomButtonClass(room, index)}`}
                   disabled={joining}
                   onClick={() => {
-                    setInviteLink(`${window.location.origin}/?meetingId=${myRooms.personalMeetingId}`);
+                    setInviteLink(`${window.location.origin}/?meetingId=${room.id}`);
                     setCopied(false);
-                    fetchTokenAndJoin(myRooms.personalMeetingId!, 'group_call_host');
+                    fetchTokenAndJoin(room.id, 'group_call_host');
                   }}
                 >
-                  <span className="block text-sm">{joining ? 'Joining…' : '🏠 My Room'}</span>
-                  {personalRoomTitle && <span className="block text-xs text-violet-200 mt-0.5">{personalRoomTitle}</span>}
+                  <span className="block text-sm">{joining ? 'Joining…' : getRoomLabel(room, index)}</span>
+                  {roomTitles[room.id] && <span className={`block text-xs mt-0.5 ${getRoomSubtitleClass(room, index)}`}>{roomTitles[room.id]}</span>}
                 </button>
                 <button
                   className="px-2 py-2 text-slate-400 hover:text-white text-sm"
                   title="Rename room"
                   onClick={() => {
-                    setEditingRoomTitle('personal');
-                    setRoomTitleDraft(personalRoomTitle || '');
+                    setEditingRoomTitle(room.id);
+                    setRoomTitleDraft(roomTitles[room.id] || '');
                   }}
                 >
                   ✏️
                 </button>
               </div>
-            )}
-            {editingRoomTitle === 'personal' && myRooms.personalMeetingId && (
+              {editingRoomTitle === room.id && (
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -1317,13 +1406,13 @@ function RealtimeMeeting() {
                   placeholder="Room title"
                   value={roomTitleDraft}
                   onChange={(e) => setRoomTitleDraft(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && roomTitleDraft.trim() && renameRoom(myRooms.personalMeetingId!, roomTitleDraft.trim())}
+                  onKeyDown={(e) => e.key === 'Enter' && roomTitleDraft.trim() && renameRoom(room.id, roomTitleDraft.trim())}
                   autoFocus
                 />
                 <button
                   className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 rounded text-white text-xs disabled:opacity-40"
                   disabled={savingTitle || !roomTitleDraft.trim()}
-                  onClick={() => renameRoom(myRooms.personalMeetingId!, roomTitleDraft.trim())}
+                  onClick={() => renameRoom(room.id, roomTitleDraft.trim())}
                 >
                   {savingTitle ? '…' : 'Save'}
                 </button>
@@ -1334,59 +1423,9 @@ function RealtimeMeeting() {
                   ✕
                 </button>
               </div>
-            )}
-            {myRooms.teamMeetingId && (
-              <div className="flex items-center gap-2">
-                <button
-                  className="flex-1 px-4 py-3 bg-indigo-700 hover:bg-indigo-600 rounded-lg text-white font-medium disabled:opacity-40 text-left"
-                  disabled={joining}
-                  onClick={() => {
-                    setInviteLink(`${window.location.origin}/?meetingId=${myRooms.teamMeetingId}`);
-                    setCopied(false);
-                    fetchTokenAndJoin(myRooms.teamMeetingId!, 'group_call_host');
-                  }}
-                >
-                  <span className="block text-sm">{joining ? 'Joining…' : '👥 Team Room'}</span>
-                  {teamRoomTitle && <span className="block text-xs text-indigo-200 mt-0.5">{teamRoomTitle}</span>}
-                </button>
-                <button
-                  className="px-2 py-2 text-slate-400 hover:text-white text-sm"
-                  title="Rename room"
-                  onClick={() => {
-                    setEditingRoomTitle('team');
-                    setRoomTitleDraft(teamRoomTitle || '');
-                  }}
-                >
-                  ✏️
-                </button>
-              </div>
-            )}
-            {editingRoomTitle === 'team' && myRooms.teamMeetingId && (
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-sky-500"
-                  placeholder="Room title"
-                  value={roomTitleDraft}
-                  onChange={(e) => setRoomTitleDraft(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && roomTitleDraft.trim() && renameRoom(myRooms.teamMeetingId!, roomTitleDraft.trim())}
-                  autoFocus
-                />
-                <button
-                  className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 rounded text-white text-xs disabled:opacity-40"
-                  disabled={savingTitle || !roomTitleDraft.trim()}
-                  onClick={() => renameRoom(myRooms.teamMeetingId!, roomTitleDraft.trim())}
-                >
-                  {savingTitle ? '…' : 'Save'}
-                </button>
-                <button
-                  className="px-2 py-1.5 text-slate-500 hover:text-white text-xs"
-                  onClick={() => setEditingRoomTitle(null)}
-                >
-                  ✕
-                </button>
-              </div>
-            )}
+              )}
+              </React.Fragment>
+            ))}
           </div>
         ) : canCreateMeetings ? (
           <button
@@ -1394,12 +1433,12 @@ function RealtimeMeeting() {
             disabled={provisioningRooms}
             onClick={provisionRooms}
           >
-            {provisioningRooms ? 'Setting up…' : '🔧 Set Up My Permanent Rooms'}
+            {provisioningRooms ? 'Setting up…' : '🔧 Set Up My Standard Rooms'}
           </button>
         ) : null}
 
         {/* Waiting Room & Screen Settings — Admin/Superadmin only */}
-        {canCreateMeetings && (myRooms.personalMeetingId || myRooms.teamMeetingId) && (
+        {canCreateMeetings && hasStandardRooms && (
           <div className="w-full max-w-sm flex flex-col gap-2">
             {/* Waiting Room Toggle */}
             <div className="flex items-center justify-between bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2.5">
