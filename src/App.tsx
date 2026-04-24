@@ -1370,7 +1370,7 @@ function RealtimeMeeting() {
         </div>
 
         {/* Standard Rooms — Admin/Superadmin only */}
-        {canCreateMeetings && hasStandardRooms ? (
+        {canCreateMeetings && hasStandardRooms && (
           <div className="flex flex-col gap-2 w-full max-w-sm">
             {standardRooms.map((room, index) => (
               <React.Fragment key={room.id}>
@@ -1427,15 +1427,21 @@ function RealtimeMeeting() {
               </React.Fragment>
             ))}
           </div>
-        ) : canCreateMeetings ? (
+        )}
+
+        {canCreateMeetings && (
           <button
             className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-white text-sm w-full max-w-sm disabled:opacity-40"
             disabled={provisioningRooms}
             onClick={provisionRooms}
           >
-            {provisioningRooms ? 'Setting up…' : '🔧 Set Up My Standard Rooms'}
+            {provisioningRooms
+              ? 'Setting up…'
+              : hasStandardRooms
+                ? '➕ Add Standard Room'
+                : '🔧 Set Up My Standard Rooms'}
           </button>
-        ) : null}
+        )}
 
         {/* Waiting Room & Screen Settings — Admin/Superadmin only */}
         {canCreateMeetings && hasStandardRooms && (
