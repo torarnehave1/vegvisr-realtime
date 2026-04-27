@@ -47,6 +47,14 @@ type MyRoomsState = {
   standardRooms: StandardRoom[];
 };
 
+const normalizeRole = (role: string | null | undefined) =>
+  (role || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+
+const canRoleManageMeetings = (role: string | null | undefined) => {
+  const normalized = normalizeRole(role);
+  return normalized === 'admin' || normalized === 'superadmin';
+};
+
 const normalizeStandardRooms = (data: any): StandardRoom[] => {
   const source = Array.isArray(data?.standardRooms)
     ? data.standardRooms
@@ -593,10 +601,7 @@ function RealtimeMeeting() {
   });
 
   // Only Admin and Superadmin can create / own meeting rooms
-  const canCreateMeetings = (() => {
-    const r = (readStoredUser()?.role || '').trim().toLowerCase();
-    return r === 'admin' || r === 'superadmin';
-  })();
+  const canCreateMeetings = canRoleManageMeetings(readStoredUser()?.role);
 
   const standardRooms = myRooms.standardRooms;
   const hasStandardRooms = standardRooms.length > 0;
@@ -1370,7 +1375,7 @@ function RealtimeMeeting() {
         </div>
 
         {/* Standard Rooms — Admin/Superadmin only */}
-        {canCreateMeetings && hasStandardRooms && (
+        {hasStandardRooms && (
           <div className="flex flex-col gap-2 w-full max-w-sm">
             {standardRooms.map((room, index) => (
               <React.Fragment key={room.id}>
@@ -1387,18 +1392,20 @@ function RealtimeMeeting() {
                   <span className="block text-sm">{joining ? 'Joining…' : getRoomLabel(room, index)}</span>
                   {roomTitles[room.id] && <span className={`block text-xs mt-0.5 ${getRoomSubtitleClass(room, index)}`}>{roomTitles[room.id]}</span>}
                 </button>
-                <button
-                  className="px-2 py-2 text-slate-400 hover:text-white text-sm"
-                  title="Rename room"
-                  onClick={() => {
-                    setEditingRoomTitle(room.id);
-                    setRoomTitleDraft(roomTitles[room.id] || '');
-                  }}
-                >
-                  ✏️
-                </button>
+                {canCreateMeetings && (
+                  <button
+                    className="px-2 py-2 text-slate-400 hover:text-white text-sm"
+                    title="Rename room"
+                    onClick={() => {
+                      setEditingRoomTitle(room.id);
+                      setRoomTitleDraft(roomTitles[room.id] || '');
+                    }}
+                  >
+                    ✏️
+                  </button>
+                )}
               </div>
-              {editingRoomTitle === room.id && (
+              {canCreateMeetings && editingRoomTitle === room.id && (
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -2113,10 +2120,19 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     if (stored?.email) {
       // Validate stored user still exists in DB — clears stale cache if deleted
       fetch(`${DASHBOARD_BASE}/get-role?email=${encodeURIComponent(stored.email)}`)
-        .then(res => {
+        .then(async res => {
           if (!isMounted) return;
           if (res.ok) {
-            setAuthUser(stored);
+            const roleData = await res.json().catch(() => null);
+            const nextRole = typeof roleData?.role === 'string' ? roleData.role : stored.role || null;
+            const nextUser = { ...stored, role: nextRole };
+            try {
+              localStorage.setItem('user', JSON.stringify({
+                ...JSON.parse(localStorage.getItem('user') || '{}'),
+                role: nextRole,
+              }));
+            } catch { /* ignore */ }
+            setAuthUser(nextUser);
             setAuthStatus('authed');
           } else {
             // User removed from DB — clear cache and force re-login
