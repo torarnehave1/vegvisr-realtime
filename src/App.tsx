@@ -574,11 +574,15 @@ function RealtimeMeeting() {
   const [superadmins, setSuperadmins] = useState<Array<{ email: string; userId?: string }>>([]);
   const [activeAccount, setActiveAccount] = useState<string>('');
   const [recordingsSort, setRecordingsSort] = useState<'date-desc' | 'date-asc' | 'name-asc' | 'name-desc'>('date-desc');
+  const [recordingsSearch, setRecordingsSearch] = useState('');
   const [uploadingRecording, setUploadingRecording] = useState(false);
   const [uploadingRecordingProgress, setUploadingRecordingProgress] = useState<number | null>(null);
   const recordingUploadInputRef = React.useRef<HTMLInputElement | null>(null);
   const [renamingKey, setRenamingKey] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
+  const [editingMetadataKey, setEditingMetadataKey] = useState<string | null>(null);
+  const [metadataDraft, setMetadataDraft] = useState<{ title: string; labels: string; thumbnailUrl: string }>({ title: '', labels: '', thumbnailUrl: '' });
+  const [savingMetadataKey, setSavingMetadataKey] = useState<string | null>(null);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [transcribingKey, setTranscribingKey] = useState<string | null>(null);
   const [transcripts, setTranscripts] = useState<Record<string, string>>({});
@@ -1100,6 +1104,50 @@ function RealtimeMeeting() {
       }
     } catch { /* ignore */ }
     finally { setRenamingKey(null); }
+  };
+
+  const startEditingRecordingMetadata = (rec: any) => {
+    setEditingMetadataKey(rec.key);
+    setMetadataDraft({
+      title: rec.title || '',
+      labels: Array.isArray(rec.labels) ? rec.labels.join(', ') : '',
+      thumbnailUrl: rec.thumbnailUrl || '',
+    });
+  };
+
+  const saveRecordingMetadata = async (key: string) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    setSavingMetadataKey(key);
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/recordings/metadata', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Token': stored.emailVerificationToken,
+        },
+        body: JSON.stringify({
+          key,
+          title: metadataDraft.title,
+          labels: metadataDraft.labels,
+          thumbnailUrl: metadataDraft.thumbnailUrl,
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.success) throw new Error(data.error || `Metadata save failed with status ${r.status}`);
+      setRecordings(prev => prev.map(rec => rec.key === key ? {
+        ...rec,
+        title: data.title || '',
+        labels: Array.isArray(data.labels) ? data.labels : [],
+        thumbnailUrl: data.thumbnailUrl || '',
+        customMetadata: data.customMetadata || rec.customMetadata || {},
+      } : rec));
+      setEditingMetadataKey(null);
+    } catch (err: any) {
+      alert('Metadata error: ' + err.message);
+    } finally {
+      setSavingMetadataKey(null);
+    }
   };
 
   const deleteRecording = async (key: string) => {
@@ -1955,8 +2003,16 @@ function RealtimeMeeting() {
               </div>
             </div>
 
-            {/* Sort selector */}
-            <div className="flex items-center justify-end gap-2 mb-3">
+            {/* Search + sort */}
+            <div className="flex flex-col gap-3 mb-3 md:flex-row md:items-center md:justify-between">
+              <input
+                type="text"
+                value={recordingsSearch}
+                onChange={(e) => setRecordingsSearch(e.target.value)}
+                placeholder="Search portfolio by title, label, owner or filename"
+                className="w-full md:max-w-sm bg-slate-800 border border-slate-700 rounded px-3 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:border-sky-500"
+              />
+              <div className="flex items-center justify-end gap-2">
               <label htmlFor="recordings-sort" className="text-slate-400 text-xs">Sort by:</label>
               <select
                 id="recordings-sort"
@@ -1970,6 +2026,7 @@ function RealtimeMeeting() {
                 <option value="name-asc">Name (A–Z)</option>
                 <option value="name-desc">Name (Z–A)</option>
               </select>
+              </div>
             </div>
 
             {/* Superadmin-only: account switcher tabs */}
@@ -2040,12 +2097,31 @@ function RealtimeMeeting() {
               {(() => {
                 const sorted = [...recordings];
                 const ts = (r: any) => r.uploaded ? new Date(r.uploaded).getTime() : 0;
-                const nm = (r: any) => String(r.name || r.key || '').toLowerCase();
+                const portfolioName = (r: any) => String(r.title || r.name || r.key || '').toLowerCase();
+                const search = recordingsSearch.trim().toLowerCase();
+                const filtered = search
+                  ? sorted.filter((r: any) => {
+                      const haystack = [
+                        r.title,
+                        r.name,
+                        r.key,
+                        r.meetingTitle,
+                        r.ownerEmail,
+                        ...(Array.isArray(r.labels) ? r.labels : []),
+                      ].filter(Boolean).join(' ').toLowerCase();
+                      return haystack.includes(search);
+                    })
+                  : sorted;
                 if (recordingsSort === 'date-desc') sorted.sort((a, b) => ts(b) - ts(a));
                 else if (recordingsSort === 'date-asc') sorted.sort((a, b) => ts(a) - ts(b));
-                else if (recordingsSort === 'name-asc') sorted.sort((a, b) => nm(a).localeCompare(nm(b)));
-                else if (recordingsSort === 'name-desc') sorted.sort((a, b) => nm(b).localeCompare(nm(a)));
-                return sorted;
+                else if (recordingsSort === 'name-asc') sorted.sort((a, b) => portfolioName(a).localeCompare(portfolioName(b)));
+                else if (recordingsSort === 'name-desc') sorted.sort((a, b) => portfolioName(b).localeCompare(portfolioName(a)));
+                return filtered.sort((a, b) => {
+                  if (recordingsSort === 'date-desc') return ts(b) - ts(a);
+                  if (recordingsSort === 'date-asc') return ts(a) - ts(b);
+                  if (recordingsSort === 'name-asc') return portfolioName(a).localeCompare(portfolioName(b));
+                  return portfolioName(b).localeCompare(portfolioName(a));
+                });
               })().map((rec: any) => {
                 const isSuperadmin = readStoredUser()?.role === 'Superadmin';
                 const sizeStr = rec.size > 1024 * 1024
@@ -2054,6 +2130,9 @@ function RealtimeMeeting() {
                 const videoUrl = getVideoUrl(rec);
                 const isPlaying = playingKey === rec.key;
                 const isR2 = rec.source !== 'realtimekit';
+                const displayTitle = rec.title || rec.name;
+                const labels = Array.isArray(rec.labels) ? rec.labels : [];
+                const hasThumbnail = !!rec.thumbnailUrl;
 
                 return (
                   <div key={rec.key} className="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
@@ -2069,15 +2148,33 @@ function RealtimeMeeting() {
                         />
                       ) : (
                         <button
-                          className="w-full flex items-center justify-center py-12 bg-slate-900 hover:bg-slate-800 transition-colors group"
+                          className="w-full flex items-center justify-center py-12 bg-slate-900 hover:bg-slate-800 transition-colors group min-h-[240px]"
                           onClick={() => setPlayingKey(rec.key)}
                           title="Play recording"
                         >
-                          <div className="flex flex-col items-center gap-2">
+                          {hasThumbnail && (
+                            <img
+                              src={rec.thumbnailUrl}
+                              alt={displayTitle}
+                              className="absolute inset-0 h-full w-full object-cover opacity-60"
+                            />
+                          )}
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/60 to-slate-950/10" />
+                          <div className="relative flex flex-col items-center gap-2 px-6">
                             <div className="w-14 h-14 rounded-full bg-white/10 group-hover:bg-white/20 flex items-center justify-center transition-colors">
                               <span className="text-2xl ml-1">▶</span>
                             </div>
-                            <span className="text-slate-400 text-xs group-hover:text-white transition-colors">Click to play</span>
+                            <span className="text-white text-base font-semibold text-center">{displayTitle}</span>
+                            {labels.length > 0 && (
+                              <div className="flex flex-wrap justify-center gap-1">
+                                {labels.map((label: string) => (
+                                  <span key={`${rec.key}-${label}`} className="rounded-full bg-slate-900/80 px-2 py-0.5 text-[11px] text-sky-200">
+                                    {label}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            <span className="text-slate-300 text-xs group-hover:text-white transition-colors">Click to play</span>
                           </div>
                         </button>
                       )}
@@ -2092,7 +2189,10 @@ function RealtimeMeeting() {
                     <div className="p-3">
                       <div className="flex items-start gap-3">
                         <div className="flex-1 min-w-0">
-                          <p className="text-white text-sm font-medium truncate" title={rec.name}>{rec.name}</p>
+                          <p className="text-white text-sm font-medium truncate" title={displayTitle}>{displayTitle}</p>
+                          {rec.title && rec.title !== rec.name && (
+                            <p className="text-slate-500 text-xs truncate mt-0.5" title={rec.name}>{rec.name}</p>
+                          )}
                           <div className="flex items-center gap-3 mt-1 flex-wrap">
                             <span className="text-slate-500 text-xs">{sizeStr}</span>
                             {rec.uploaded && <span className="text-slate-500 text-xs">{new Date(rec.uploaded).toLocaleString()}</span>}
@@ -2101,6 +2201,15 @@ function RealtimeMeeting() {
                             {rec.ownerEmail && <span className="text-emerald-400 text-xs" title="Meeting owner">👤 {rec.ownerEmail}</span>}
                             {rec.error && <span className="text-red-400 text-xs" title={rec.error}>⚠️ R2 failed</span>}
                           </div>
+                          {labels.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {labels.map((label: string) => (
+                                <span key={`${rec.key}-meta-${label}`} className="rounded-full bg-slate-700 px-2 py-0.5 text-[11px] text-sky-200">
+                                  {label}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                         <div className="flex items-center gap-1.5 flex-shrink-0">
                           <button
@@ -2131,6 +2240,15 @@ function RealtimeMeeting() {
                           )}
                           {isSuperadmin && (
                             <>
+                              {rec.source === 'r2' && (
+                                <button
+                                  className="px-2 py-1.5 text-slate-400 hover:text-white text-xs"
+                                  title="Edit portfolio metadata"
+                                  onClick={() => startEditingRecordingMetadata(rec)}
+                                >
+                                  🏷
+                                </button>
+                              )}
                               <button
                                 className="px-2 py-1.5 text-slate-400 hover:text-white text-xs"
                                 title="Rename"
@@ -2175,6 +2293,56 @@ function RealtimeMeeting() {
                           >
                             ✕
                           </button>
+                        </div>
+                      )}
+
+                      {editingMetadataKey === rec.key && (
+                        <div className="mt-3 border border-slate-600 rounded-lg p-3 bg-slate-900/70 space-y-2">
+                          <div>
+                            <label className="block text-slate-400 text-xs mb-1">Portfolio title</label>
+                            <input
+                              type="text"
+                              className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-xs focus:outline-none focus:border-sky-500"
+                              value={metadataDraft.title}
+                              onChange={(e) => setMetadataDraft(prev => ({ ...prev, title: e.target.value }))}
+                              placeholder="Featured video title"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-slate-400 text-xs mb-1">Labels</label>
+                            <input
+                              type="text"
+                              className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-xs focus:outline-none focus:border-sky-500"
+                              value={metadataDraft.labels}
+                              onChange={(e) => setMetadataDraft(prev => ({ ...prev, labels: e.target.value }))}
+                              placeholder="newsroom, interview, live, campus"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-slate-400 text-xs mb-1">Thumbnail image URL</label>
+                            <input
+                              type="url"
+                              className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-xs focus:outline-none focus:border-sky-500"
+                              value={metadataDraft.thumbnailUrl}
+                              onChange={(e) => setMetadataDraft(prev => ({ ...prev, thumbnailUrl: e.target.value }))}
+                              placeholder="https://…"
+                            />
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              className="px-2 py-1 bg-sky-600 hover:bg-sky-500 rounded text-white text-xs disabled:opacity-40"
+                              onClick={() => saveRecordingMetadata(rec.key)}
+                              disabled={savingMetadataKey === rec.key}
+                            >
+                              {savingMetadataKey === rec.key ? 'Saving…' : 'Save metadata'}
+                            </button>
+                            <button
+                              className="px-2 py-1 text-slate-400 hover:text-white text-xs"
+                              onClick={() => setEditingMetadataKey(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         </div>
                       )}
 
