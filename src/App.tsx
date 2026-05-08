@@ -574,6 +574,8 @@ function RealtimeMeeting() {
   const [superadmins, setSuperadmins] = useState<Array<{ email: string; userId?: string }>>([]);
   const [activeAccount, setActiveAccount] = useState<string>('');
   const [recordingsSort, setRecordingsSort] = useState<'date-desc' | 'date-asc' | 'name-asc' | 'name-desc'>('date-desc');
+  const [uploadingRecording, setUploadingRecording] = useState(false);
+  const recordingUploadInputRef = React.useRef<HTMLInputElement | null>(null);
   const [renamingKey, setRenamingKey] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
@@ -966,6 +968,39 @@ function RealtimeMeeting() {
       if (data.success) setRecordings(data.recordings || []);
     } catch { /* ignore */ }
     finally { setLoadingRecordings(false); }
+  };
+
+  const uploadRecordingToR2 = async (file: File) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    if (stored.role !== 'Superadmin') {
+      alert('Only Superadmin users can upload videos to R2.');
+      return;
+    }
+    setUploadingRecording(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('filename', file.name);
+      const r = await fetch('https://api.vegvisr.org/realtime/recordings/upload', {
+        method: 'POST',
+        headers: {
+          'X-API-Token': stored.emailVerificationToken,
+        },
+        body: formData,
+      });
+      const data = await r.json();
+      if (!r.ok || !data.success) {
+        throw new Error(data.error || `Upload failed with status ${r.status}`);
+      }
+      await fetchRecordings();
+      alert(`Uploaded ${data.name || file.name} to R2.`);
+    } catch (err: any) {
+      alert('Upload error: ' + err.message);
+    } finally {
+      setUploadingRecording(false);
+      if (recordingUploadInputRef.current) recordingUploadInputRef.current.value = '';
+    }
   };
 
   const renameRecording = async (key: string, newName: string) => {
@@ -1794,6 +1829,27 @@ function RealtimeMeeting() {
                 <p className="text-slate-400 text-sm">Play, transcribe and manage your meeting recordings.</p>
               </div>
               <div className="flex gap-2">
+                {readStoredUser()?.role === 'Superadmin' && (
+                  <>
+                    <input
+                      ref={recordingUploadInputRef}
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) uploadRecordingToR2(file);
+                      }}
+                    />
+                    <button
+                      className="px-3 py-2 bg-emerald-700 hover:bg-emerald-600 rounded text-white text-xs disabled:opacity-40"
+                      disabled={uploadingRecording}
+                      onClick={() => recordingUploadInputRef.current?.click()}
+                    >
+                      {uploadingRecording ? 'Uploading…' : '⬆ Upload Video to R2'}
+                    </button>
+                  </>
+                )}
                 {recordings.some((r: any) => r.source === 'realtimekit') && (
                   <button
                     className="px-3 py-2 bg-amber-700 hover:bg-amber-600 rounded text-white text-xs disabled:opacity-40"
