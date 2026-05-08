@@ -570,6 +570,10 @@ function RealtimeMeeting() {
   const [recordings, setRecordings] = useState<any[]>([]);
   const [loadingRecordings, setLoadingRecordings] = useState(false);
   const [syncingRecordings, setSyncingRecordings] = useState(false);
+  const [syncJobs, setSyncJobs] = useState<Array<{ jobId: string; fileName: string; status: string; message?: string | null }>>([]);
+  const [superadmins, setSuperadmins] = useState<Array<{ email: string; userId?: string }>>([]);
+  const [activeAccount, setActiveAccount] = useState<string>('');
+  const [recordingsSort, setRecordingsSort] = useState<'date-desc' | 'date-asc' | 'name-asc' | 'name-desc'>('date-desc');
   const [renamingKey, setRenamingKey] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
@@ -952,7 +956,10 @@ function RealtimeMeeting() {
     if (!stored?.emailVerificationToken) return;
     setLoadingRecordings(true);
     try {
-      const r = await fetch('https://api.vegvisr.org/realtime/recordings', {
+      const target = activeAccount && activeAccount !== stored.email
+        ? `?asUser=${encodeURIComponent(activeAccount)}`
+        : '';
+      const r = await fetch(`https://api.vegvisr.org/realtime/recordings${target}`, {
         headers: { 'X-API-Token': stored.emailVerificationToken },
       });
       const data = await r.json();
@@ -1149,23 +1156,76 @@ function RealtimeMeeting() {
   const syncRecordingsToR2 = async () => {
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) return;
+    const targetEmail = activeAccount && activeAccount !== stored.email ? activeAccount : null;
     setSyncingRecordings(true);
+    setSyncJobs([]);
     try {
+      // 1. Enqueue jobs (returns immediately, no waiting on the upload)
       const r = await fetch('https://api.vegvisr.org/realtime/recordings/sync', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-API-Token': stored.emailVerificationToken,
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify(targetEmail ? { asUser: targetEmail } : {}),
       });
       const data = await r.json();
-      if (data.success) {
-        alert(`Synced ${data.synced} recording(s) to R2. ${data.skipped} already existed.`);
-        await fetchRecordings();
-      } else {
-        alert('Sync failed: ' + (data.error || 'Unknown error'));
+      if (!data.success) {
+        alert('Sync failed to start: ' + (data.error || 'Unknown error'));
+        return;
       }
+
+      const queuedJobs: Array<{ jobId: string; fileName: string }> = (data.jobs || [])
+        .filter((j: any) => j.status === 'queued' && j.jobId)
+        .map((j: any) => ({ jobId: j.jobId, fileName: j.name }));
+
+      if (queuedJobs.length === 0) {
+        alert(`No new recordings to sync. ${data.skipped || 0} already existed.`);
+        await fetchRecordings();
+        return;
+      }
+
+      setSyncJobs(queuedJobs.map(j => ({ jobId: j.jobId, fileName: j.fileName, status: 'queued' })));
+
+      // 2. Poll status until all jobs reach a terminal state
+      const jobIds = queuedJobs.map(j => j.jobId);
+      const TERMINAL = new Set(['done', 'failed', 'already_exists', 'skipped']);
+      const startedAt = Date.now();
+      const MAX_WAIT_MS = 30 * 60 * 1000; // 30 min safety cap
+      let allDone = false;
+      const asUserParam = targetEmail ? `&asUser=${encodeURIComponent(targetEmail)}` : '';
+      while (!allDone) {
+        if (Date.now() - startedAt > MAX_WAIT_MS) break;
+        await new Promise(r => setTimeout(r, 3000));
+        try {
+          const sr = await fetch(
+            `https://api.vegvisr.org/realtime/recordings/sync-status?jobIds=${encodeURIComponent(jobIds.join(','))}${asUserParam}`,
+            { headers: { 'X-API-Token': stored.emailVerificationToken } }
+          );
+          const sd = await sr.json();
+          if (sd.success && Array.isArray(sd.jobs)) {
+            setSyncJobs(sd.jobs.map((j: any) => ({
+              jobId: j.jobId,
+              fileName: j.fileName,
+              status: j.status,
+              message: j.message,
+            })));
+            if (sd.jobs.length > 0 && sd.jobs.every((j: any) => TERMINAL.has(j.status))) {
+              allDone = true;
+            }
+          }
+        } catch { /* keep polling */ }
+      }
+
+      const finalSr = await fetch(
+        `https://api.vegvisr.org/realtime/recordings/sync-status?jobIds=${encodeURIComponent(jobIds.join(','))}${asUserParam}`,
+        { headers: { 'X-API-Token': stored.emailVerificationToken } }
+      );
+      const finalSd = await finalSr.json();
+      const done = (finalSd.jobs || []).filter((j: any) => j.status === 'done').length;
+      const failed = (finalSd.jobs || []).filter((j: any) => j.status === 'failed').length;
+      alert(`Sync complete: ${done} uploaded, ${failed} failed.${failed > 0 ? ' Check the status panel for details.' : ''}`);
+      await fetchRecordings();
     } catch (err: any) {
       alert('Sync error: ' + err.message);
     } finally {
@@ -1177,6 +1237,9 @@ function RealtimeMeeting() {
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) return null;
     if (rec.source === 'realtimekit' && rec.download_url) return rec.download_url;
+    // Prefer the playUrl from the listing (presigned for r2-own, public for shared bucket).
+    if (rec.playUrl) return rec.playUrl;
+    // Legacy proxy fallback (still works, but loads bytes through the worker).
     return `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(rec.key)}&token=${encodeURIComponent(stored.emailVerificationToken)}`;
   };
 
@@ -1188,6 +1251,36 @@ function RealtimeMeeting() {
       setTimeout(() => setCopiedTranscript(null), 2000);
     });
   };
+
+  // Load the Superadmin account list for the tab switcher (only Superadmins
+  // can call this endpoint; for everyone else it just returns 403 and the
+  // tabs stay hidden).
+  useEffect(() => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    if (stored.role !== 'Superadmin') return;
+    (async () => {
+      try {
+        const r = await fetch('https://api.vegvisr.org/realtime/admin/superadmins', {
+          headers: { 'X-API-Token': stored.emailVerificationToken },
+        });
+        const data = await r.json();
+        if (data.success && Array.isArray(data.users)) {
+          setSuperadmins(data.users);
+          if (!activeAccount) setActiveAccount(data.currentEmail || stored.email || '');
+        }
+      } catch { /* ignore */ }
+    })();
+  }, []);
+
+  // When the Superadmin switches tabs, reload that user's recordings.
+  useEffect(() => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    if (lobbyTab !== 'recordings') return;
+    if (!activeAccount) return;
+    fetchRecordings();
+  }, [activeAccount, lobbyTab]);
 
   useEffect(() => {
     const searchParams = new URL(window.location.href).searchParams;
@@ -1719,6 +1812,73 @@ function RealtimeMeeting() {
               </div>
             </div>
 
+            {/* Sort selector */}
+            <div className="flex items-center justify-end gap-2 mb-3">
+              <label htmlFor="recordings-sort" className="text-slate-400 text-xs">Sort by:</label>
+              <select
+                id="recordings-sort"
+                title="Sort recordings"
+                value={recordingsSort}
+                onChange={(e) => setRecordingsSort(e.target.value as typeof recordingsSort)}
+                className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-white text-xs focus:outline-none focus:border-sky-500"
+              >
+                <option value="date-desc">Date (newest first)</option>
+                <option value="date-asc">Date (oldest first)</option>
+                <option value="name-asc">Name (A–Z)</option>
+                <option value="name-desc">Name (Z–A)</option>
+              </select>
+            </div>
+
+            {/* Superadmin-only: account switcher tabs */}
+            {superadmins.length > 1 && (
+              <div className="mb-4 flex flex-wrap gap-1 border-b border-slate-700">
+                {superadmins.map(u => {
+                  const isActive = u.email === activeAccount;
+                  const stored = readStoredUser();
+                  const isSelf = u.email === stored?.email;
+                  return (
+                    <button
+                      key={u.email}
+                      onClick={() => setActiveAccount(u.email)}
+                      className={`px-3 py-1.5 text-xs rounded-t transition-colors ${
+                        isActive
+                          ? 'bg-slate-800 text-white border border-b-0 border-slate-700'
+                          : 'bg-transparent text-slate-400 hover:text-white hover:bg-slate-800/50'
+                      }`}
+                      title={isSelf ? 'Your account' : `View ${u.email}'s recordings`}
+                    >
+                      {isSelf ? `${u.email} (you)` : u.email}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {syncJobs.length > 0 && (
+              <div className="mb-4 rounded border border-slate-700 bg-slate-900/60 p-3">
+                <div className="text-xs text-slate-300 mb-2 font-semibold">Sync progress</div>
+                <ul className="space-y-1">
+                  {syncJobs.map(job => {
+                    const color =
+                      job.status === 'done' ? 'text-emerald-400'
+                      : job.status === 'failed' ? 'text-red-400'
+                      : job.status === 'uploading' ? 'text-sky-400'
+                      : job.status === 'downloading' ? 'text-amber-400'
+                      : 'text-slate-400';
+                    return (
+                      <li key={job.jobId} className="text-xs flex items-center justify-between gap-2">
+                        <span className="truncate text-slate-300">{job.fileName}</span>
+                        <span className={`shrink-0 ${color}`}>
+                          {job.status}
+                          {job.message && job.status === 'failed' ? ` — ${job.message}` : ''}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+
             {recordings.length === 0 && !loadingRecordings && (
               <div className="text-center py-16 text-slate-500">
                 <p className="text-4xl mb-3">🎬</p>
@@ -1734,7 +1894,16 @@ function RealtimeMeeting() {
             )}
 
             <div className="grid gap-4">
-              {recordings.map((rec: any) => {
+              {(() => {
+                const sorted = [...recordings];
+                const ts = (r: any) => r.uploaded ? new Date(r.uploaded).getTime() : 0;
+                const nm = (r: any) => String(r.name || r.key || '').toLowerCase();
+                if (recordingsSort === 'date-desc') sorted.sort((a, b) => ts(b) - ts(a));
+                else if (recordingsSort === 'date-asc') sorted.sort((a, b) => ts(a) - ts(b));
+                else if (recordingsSort === 'name-asc') sorted.sort((a, b) => nm(a).localeCompare(nm(b)));
+                else if (recordingsSort === 'name-desc') sorted.sort((a, b) => nm(b).localeCompare(nm(a)));
+                return sorted;
+              })().map((rec: any) => {
                 const isSuperadmin = readStoredUser()?.role === 'Superadmin';
                 const sizeStr = rec.size > 1024 * 1024
                   ? `${(rec.size / (1024 * 1024)).toFixed(1)} MB`
