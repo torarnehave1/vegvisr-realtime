@@ -1956,6 +1956,7 @@ function RealtimeMeeting() {
                             {rec.uploaded && <span className="text-slate-500 text-xs">{new Date(rec.uploaded).toLocaleString()}</span>}
                             {rec.duration != null && <span className="text-slate-500 text-xs">{Math.floor(rec.duration / 60)}:{String(Math.floor(rec.duration % 60)).padStart(2, '0')}</span>}
                             {rec.meetingTitle && <span className="text-slate-400 text-xs">📹 {rec.meetingTitle}</span>}
+                            {rec.ownerEmail && <span className="text-emerald-400 text-xs" title="Meeting owner">👤 {rec.ownerEmail}</span>}
                             {rec.error && <span className="text-red-400 text-xs" title={rec.error}>⚠️ R2 failed</span>}
                           </div>
                         </div>
