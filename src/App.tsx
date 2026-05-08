@@ -575,6 +575,7 @@ function RealtimeMeeting() {
   const [activeAccount, setActiveAccount] = useState<string>('');
   const [recordingsSort, setRecordingsSort] = useState<'date-desc' | 'date-asc' | 'name-asc' | 'name-desc'>('date-desc');
   const [uploadingRecording, setUploadingRecording] = useState(false);
+  const [uploadingRecordingProgress, setUploadingRecordingProgress] = useState<number | null>(null);
   const recordingUploadInputRef = React.useRef<HTMLInputElement | null>(null);
   const [renamingKey, setRenamingKey] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
@@ -978,27 +979,103 @@ function RealtimeMeeting() {
       return;
     }
     setUploadingRecording(true);
+    setUploadingRecordingProgress(0);
+    let uploadSession: { uploadId: string; key: string; name: string; size: number; contentType: string } | null = null;
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('filename', file.name);
-      const r = await fetch('https://api.vegvisr.org/realtime/recordings/upload', {
+      const initResponse = await fetch('https://api.vegvisr.org/realtime/recordings/upload/init', {
         method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           'X-API-Token': stored.emailVerificationToken,
         },
-        body: formData,
+        body: JSON.stringify({
+          filename: file.name,
+          contentType: file.type || 'video/mp4',
+          size: file.size,
+        }),
       });
-      const data = await r.json();
-      if (!r.ok || !data.success) {
-        throw new Error(data.error || `Upload failed with status ${r.status}`);
+      const initData = await initResponse.json();
+      if (!initResponse.ok || !initData.success) {
+        throw new Error(initData.error || `Upload init failed with status ${initResponse.status}`);
       }
+      uploadSession = initData;
+      const currentUpload = initData as {
+        uploadId: string;
+        key: string;
+        name: string;
+        size: number;
+        contentType: string;
+      };
+
+      const chunkSize = 8 * 1024 * 1024;
+      const parts: Array<{ partNumber: number; etag: string }> = [];
+      const totalParts = Math.max(1, Math.ceil(file.size / chunkSize));
+
+      for (let partNumber = 1; partNumber <= totalParts; partNumber += 1) {
+        const start = (partNumber - 1) * chunkSize;
+        const end = Math.min(file.size, start + chunkSize);
+        const chunk = file.slice(start, end);
+        const partResponse = await fetch(
+          `https://api.vegvisr.org/realtime/recordings/upload/part?key=${encodeURIComponent(currentUpload.key)}&uploadId=${encodeURIComponent(currentUpload.uploadId)}&partNumber=${partNumber}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/octet-stream',
+              'X-API-Token': stored.emailVerificationToken,
+            },
+            body: chunk,
+          }
+        );
+        const partData = await partResponse.json();
+        if (!partResponse.ok || !partData.success || !partData.part?.etag) {
+          throw new Error(partData.error || `Upload part ${partNumber} failed with status ${partResponse.status}`);
+        }
+        parts.push({ partNumber: Number(partData.part.partNumber), etag: String(partData.part.etag) });
+        setUploadingRecordingProgress(Math.round((partNumber / totalParts) * 100));
+      }
+
+      const completeResponse = await fetch('https://api.vegvisr.org/realtime/recordings/upload/complete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Token': stored.emailVerificationToken,
+        },
+        body: JSON.stringify({
+          key: currentUpload.key,
+          uploadId: currentUpload.uploadId,
+          parts,
+          name: currentUpload.name,
+          size: currentUpload.size,
+          contentType: currentUpload.contentType,
+        }),
+      });
+      const completeData = await completeResponse.json();
+      if (!completeResponse.ok || !completeData.success) {
+        throw new Error(completeData.error || `Upload complete failed with status ${completeResponse.status}`);
+      }
+
       await fetchRecordings();
-      alert(`Uploaded ${data.name || file.name} to R2.`);
+      alert(`Uploaded ${completeData.name || file.name} to R2.`);
     } catch (err: any) {
+      if (uploadSession?.uploadId && uploadSession?.key) {
+        try {
+          await fetch('https://api.vegvisr.org/realtime/recordings/upload/abort', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-API-Token': stored.emailVerificationToken,
+            },
+            body: JSON.stringify({
+              key: uploadSession.key,
+              uploadId: uploadSession.uploadId,
+            }),
+          });
+        } catch { /* ignore abort cleanup errors */ }
+      }
       alert('Upload error: ' + err.message);
     } finally {
       setUploadingRecording(false);
+      setUploadingRecordingProgress(null);
       if (recordingUploadInputRef.current) recordingUploadInputRef.current.value = '';
     }
   };
@@ -1846,7 +1923,9 @@ function RealtimeMeeting() {
                       disabled={uploadingRecording}
                       onClick={() => recordingUploadInputRef.current?.click()}
                     >
-                      {uploadingRecording ? 'Uploading…' : '⬆ Upload Video to R2'}
+                      {uploadingRecording
+                        ? `Uploading${uploadingRecordingProgress != null ? ` ${uploadingRecordingProgress}%` : '…'}`
+                        : '⬆ Upload Video to R2'}
                     </button>
                   </>
                 )}
