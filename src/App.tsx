@@ -1128,6 +1128,7 @@ function RealtimeMeeting() {
         },
         body: JSON.stringify({
           key,
+          asUser: activeAccount && activeAccount !== stored.email ? activeAccount : undefined,
           title: metadataDraft.title,
           labels: metadataDraft.labels,
           thumbnailUrl: metadataDraft.thumbnailUrl,
@@ -2240,7 +2241,7 @@ function RealtimeMeeting() {
                           )}
                           {isSuperadmin && (
                             <>
-                              {rec.source === 'r2' && (
+                              {(rec.source === 'r2' || rec.source === 'r2-own') && (
                                 <button
                                   className="px-2 py-1.5 text-slate-400 hover:text-white text-xs"
                                   title="Edit portfolio metadata"
