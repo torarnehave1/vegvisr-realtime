@@ -1257,12 +1257,13 @@ function RealtimeMeeting() {
   // tabs stay hidden).
   useEffect(() => {
     const stored = readStoredUser();
-    if (!stored?.emailVerificationToken) return;
+    const token = stored?.emailVerificationToken;
+    if (!token) return;
     if (stored.role !== 'Superadmin') return;
     (async () => {
       try {
         const r = await fetch('https://api.vegvisr.org/realtime/admin/superadmins', {
-          headers: { 'X-API-Token': stored.emailVerificationToken },
+          headers: { 'X-API-Token': token },
         });
         const data = await r.json();
         if (data.success && Array.isArray(data.users)) {
