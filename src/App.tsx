@@ -1184,15 +1184,22 @@ function RealtimeMeeting() {
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  const transcribeRecording = async (key: string) => {
+  const transcribeRecording = async (rec: any) => {
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) return;
+    const key = rec.key;
     setTranscribingKey(key);
     setTranscribeProgress(null);
     setTranscripts(prev => ({ ...prev, [key]: 'Downloading recording…' }));
     try {
-      // 1. Download the video/audio from R2 via the download endpoint
-      const downloadUrl = `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(key)}&token=${encodeURIComponent(stored.emailVerificationToken)}`;
+      // Download either the R2 object or the RealtimeKit cloud recording through the API
+      const params = new URLSearchParams({ token: stored.emailVerificationToken });
+      if (rec.source === 'realtimekit' && rec.download_url) {
+        params.set('rtk_url', rec.download_url);
+      } else {
+        params.set('key', key);
+      }
+      const downloadUrl = `https://api.vegvisr.org/realtime/recordings/download?${params.toString()}`;
       const dlResp = await fetch(downloadUrl);
       if (!dlResp.ok) throw new Error(`Download failed: ${dlResp.status} ${dlResp.statusText}`);
       const arrayBuf = await dlResp.arrayBuffer();
@@ -2110,10 +2117,10 @@ function RealtimeMeeting() {
                           >
                             ⬇
                           </button>
-                          {isR2 && (
+                          {((rec.source !== 'realtimekit') || !!rec.download_url) && (
                             <button
                               className="px-2.5 py-1.5 bg-purple-700 hover:bg-purple-600 rounded text-white text-xs disabled:opacity-40"
-                              onClick={() => transcribeRecording(rec.key)}
+                              onClick={() => transcribeRecording(rec)}
                               disabled={transcribingKey === rec.key}
                               title="Transcribe with Whisper"
                             >
