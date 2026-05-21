@@ -29,6 +29,8 @@ import { AuthBar, EcosystemNav } from 'vegvisr-ui-kit';
 import { readStoredUser, type AuthUser } from './lib/auth';
 import { Login } from './components/Login';
 import { WaitingRoomPanel } from './components/WaitingRoomPanel';
+import { AccessDeniedPage } from './components/AccessDeniedPage';
+import { SlugManagement } from './components/SlugManagement';
 
 const MAGIC_BASE = 'https://cookie.vegvisr.org';
 const DASHBOARD_BASE = 'https://dashboard.vegvisr.org';
@@ -587,7 +589,7 @@ function RealtimeMeeting() {
   const [transcribingKey, setTranscribingKey] = useState<string | null>(null);
   const [transcripts, setTranscripts] = useState<Record<string, string>>({});
   const [transcribeProgress, setTranscribeProgress] = useState<{ current: number; total: number } | null>(null);
-  const [lobbyTab, setLobbyTab] = useState<'meetings' | 'recordings'>('meetings');
+  const [lobbyTab, setLobbyTab] = useState<'meetings' | 'recordings' | 'slugs'>('meetings');
   const [playingKey, setPlayingKey] = useState<string | null>(null);
   const [copiedTranscript, setCopiedTranscript] = useState<string | null>(null);
   const [waitingTitle, setWaitingTitle] = useState('');
@@ -597,6 +599,9 @@ function RealtimeMeeting() {
   const [waitingRoomEnabled, setWaitingRoomEnabled] = useState(false);
   const [togglingWaitingRoom, setTogglingWaitingRoom] = useState(false);
   const [pendingMeetingId, setPendingMeetingId] = useState<string | null>(null);
+  // Custom slug state
+  const [slugAccessDenied, setSlugAccessDenied] = useState<{ slug: string; ownerEmail: string } | null>(null);
+  const [slugLoading, setSlugLoading] = useState(false);
   // Guest waiting room state
   const [guestWaiting, setGuestWaiting] = useState(false);
   const [guestDenied, setGuestDenied] = useState(false);
@@ -1451,12 +1456,56 @@ function RealtimeMeeting() {
     fetchRecordings();
   }, [activeAccount, lobbyTab]);
 
+  // Validate custom slug and redirect or show access denied
+  const validateAndRedirectSlug = async (slug: string) => {
+    setSlugLoading(true);
+    const stored = readStoredUser();
+    try {
+      const res = await fetch(`https://api.vegvisr.org/realtime/validate-slug`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(stored?.emailVerificationToken && { 'X-API-Token': stored.emailVerificationToken }),
+        },
+        body: JSON.stringify({
+          slug,
+          userEmail: stored?.email || '',
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.meetingId) {
+        // Approved — redirect to meeting
+        window.history.replaceState({}, '', `/?meetingId=${encodeURIComponent(data.meetingId)}`);
+        setPendingMeetingId(data.meetingId);
+      } else {
+        // Not approved or slug not found
+        setSlugAccessDenied({
+          slug,
+          ownerEmail: data.ownerEmail || 'unknown',
+        });
+      }
+    } catch (err) {
+      setSlugAccessDenied({ slug, ownerEmail: 'unknown' });
+    } finally {
+      setSlugLoading(false);
+    }
+  };
+
   useEffect(() => {
+    const pathname = window.location.pathname;
     const searchParams = new URL(window.location.href).searchParams;
     const authToken = searchParams.get('authToken');
     const meetingId = searchParams.get('meetingId');
 
     provideRtkDesignSystem(document.body, { theme: 'dark' });
+
+    // Check for custom slug in pathname (e.g., /slowyou)
+    const slugMatch = pathname.match(/^\/([a-z0-9\-]{3,50})$/);
+    if (slugMatch) {
+      const slug = slugMatch[1];
+      validateAndRedirectSlug(slug);
+      return;
+    }
 
     // Direct token in URL — use it immediately (legacy / invite link flow)
     if (authToken) {
@@ -1614,6 +1663,14 @@ function RealtimeMeeting() {
           >
             🎬 Recordings {recordings.length > 0 && <span className="ml-1 text-xs bg-slate-700 rounded-full px-1.5">{recordings.length}</span>}
           </button>
+          {readStoredUser()?.role === 'Superadmin' && (
+            <button
+              className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${lobbyTab === 'slugs' ? 'text-white border-b-2 border-emerald-500 bg-slate-800/50' : 'text-slate-400 hover:text-white'}`}
+              onClick={() => setLobbyTab('slugs')}
+            >
+              🔗 Room Slugs
+            </button>
+          )}
         </div>
 
         {/* ─── Meetings Tab ─── */}
@@ -2385,11 +2442,23 @@ function RealtimeMeeting() {
         </div>
         )}
 
+        {/* ─── Slugs Tab ─── */}
+        {lobbyTab === 'slugs' && (
+        <div className="flex flex-col flex-1 gap-6 p-8 overflow-y-auto">
+          <SlugManagement userRooms={myRooms.standardRooms} />
+        </div>
+        )}
+
       </div>
     );
   }
 
   // Meeting not initialized yet — show waiting screen
+  // Show access denied page if slug validation failed
+  if (slugAccessDenied) {
+    return <AccessDeniedPage slug={slugAccessDenied.slug} ownerEmail={slugAccessDenied.ownerEmail} />;
+  }
+
   if (!meeting) {
     const wsTitle = waitingScreenInfo?.waitingTitle || waitingScreenInfo?.meetingTitle;
     const wsHost = waitingScreenInfo?.hostName;
