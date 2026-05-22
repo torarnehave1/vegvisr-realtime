@@ -23,6 +23,85 @@ A real-time video meeting and communication platform built with React, TypeScrip
 - **Animations:** motion
 - **Authentication:** Email-based magic links with verification tokens
 
+## Ecosystem Context
+
+Vegvisr Realtime is a frontend client application in the Vegvisr ecosystem. It connects to the centralized backend (vegvisr-frontend) which provides all meeting management, storage, and infrastructure services.
+
+### L1: System Context
+
+Shows how vegvisr-realtime fits within the Vegvisr ecosystem and interacts with external systems.
+
+```mermaid
+graph TB
+    User["👤 User<br/>(Browser)"]
+    RealtimeApp["📹 Vegvisr Realtime<br/>(React 18 App)"]
+    RealtimeKit["☁️ Cloudflare RealtimeKit<br/>(Video Service)"]
+    RealtimeWorker["⚙️ Realtime Worker<br/>(API Backend)"]
+    D1["🗄️ D1 Database<br/>(vegvisr_org)"]
+    R2["💾 R2 Storage<br/>(meeting-recordings)"]
+    MagicAuth["🔐 Magic Link Auth<br/>(cookie.vegvisr.org)"]
+
+    User -->|Browser| RealtimeApp
+    RealtimeApp -->|Initialize Call| RealtimeKit
+    RealtimeApp -->|REST API<br/>realtime/*| RealtimeWorker
+    RealtimeWorker -->|Query/Insert| D1
+    RealtimeWorker -->|Upload/Download| R2
+    RealtimeWorker -->|Real-time Signal| RealtimeKit
+    RealtimeApp -->|Magic Link Flow| MagicAuth
+    MagicAuth -->|Token| RealtimeApp
+
+    style User fill:#e1f5ff
+    style RealtimeApp fill:#c8e6c9
+    style RealtimeKit fill:#fff9c4
+    style RealtimeWorker fill:#f8bbd0
+    style D1 fill:#e0bee7
+    style R2 fill:#ffccbc
+    style MagicAuth fill:#b3e5fc
+```
+
+### L2: Container Diagram
+
+Shows the internal building blocks of vegvisr-realtime and its dependencies.
+
+```mermaid
+graph TB
+    Browser["🌐 Browser"]
+    
+    subgraph RealtimeApp["📱 Vegvisr Realtime (React 18 + TypeScript)"]
+        Login["🔑 Login Component<br/>(Email + Token Auth)"]
+        App["📱 App Container<br/>(Route Handler, State)"]
+        WaitingRoom["🚪 Waiting Room Panel<br/>(Guest Management)"]
+        VideoUI["📹 Video UI<br/>(RealtimeKit Integration)"]
+        ChatUI["💬 Chat UI<br/>(Real-time Messaging)"]
+        RoomMgmt["🏠 Room Management<br/>(Personal/Team/Standard)"]
+    end
+
+    subgraph Infrastructure["☁️ External Services"]
+        RealtimeKit["Cloudflare RealtimeKit<br/>(WebRTC, Media)"]
+        RealtimeAPI["Realtime Worker API<br/>https://api.vegvisr.org/realtime/*"]
+        AuthSvc["Auth Service<br/>(Magic Links)"]
+    end
+
+    Browser -->|Load| RealtimeApp
+    Login -->|Authenticate| AuthSvc
+    App -->|Initialize| VideoUI
+    VideoUI -->|Connect| RealtimeKit
+    WaitingRoom -->|GET /waiting-room/list| RealtimeAPI
+    WaitingRoom -->|POST /waiting-room/admit| RealtimeAPI
+    App -->|GET /my-rooms| RealtimeAPI
+    App -->|POST /create-meeting| RealtimeAPI
+    ChatUI -->|Real-time| RealtimeKit
+    RoomMgmt -->|GET /meeting-info| RealtimeAPI
+
+    style RealtimeApp fill:#c8e6c9
+    style Infrastructure fill:#ffecb3
+    style Browser fill:#e1f5ff
+```
+
+For full architecture details, see [C4 Architecture Diagrams](../../c4-diagrams/vegvisr-realtime-c4.md) in the ecosystem.
+
+---
+
 ## Getting Started
 
 ### Prerequisites
