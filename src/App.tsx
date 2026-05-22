@@ -2757,11 +2757,34 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
+  // Anonymous visitors hitting a slug URL (e.g. /slowyou) bypass the login screen
+  // and go straight into the inner app, which renders SlugJoinPrompt for the email entry.
+  const slugUrlMatch = typeof window !== 'undefined'
+    && /^\/[a-z0-9\-]{3,50}$/.test(window.location.pathname);
+
   if (authStatus === 'anonymous') {
+    if (slugUrlMatch) {
+      return (
+        <AuthContext.Provider value={null}>
+          <div className="flex flex-col h-screen bg-slate-950 text-white">
+            <div className="flex-1 min-h-0">{children}</div>
+          </div>
+        </AuthContext.Provider>
+      );
+    }
     return <Login />;
   }
 
-  // checking state — spinner
+  // checking state — spinner (skip for slug URLs to avoid a flash before the prompt)
+  if (slugUrlMatch) {
+    return (
+      <AuthContext.Provider value={null}>
+        <div className="flex flex-col h-screen bg-slate-950 text-white">
+          <div className="flex-1 min-h-0">{children}</div>
+        </div>
+      </AuthContext.Provider>
+    );
+  }
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center">
       <div className="w-8 h-8 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" />
