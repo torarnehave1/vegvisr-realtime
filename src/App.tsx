@@ -1488,7 +1488,16 @@ function RealtimeMeeting() {
       } else {
         // Not approved or slug not found
         if (isGuest) {
-          setSlugPromptError(data.error || 'Email not approved for this room');
+          // Map status codes to friendly, non-technical messages
+          let friendly = 'Something went wrong. Please try again.';
+          if (res.status === 403) {
+            friendly = "We couldn't find this email on the guest list. Double-check the address you entered, or ask the person who invited you to add it.";
+          } else if (res.status === 400 && /not found/i.test(data.error || '')) {
+            friendly = "This invitation link doesn't exist or has been removed.";
+          } else if (res.status === 400 && /email/i.test(data.error || '')) {
+            friendly = 'Please enter a valid email address.';
+          }
+          setSlugPromptError(friendly);
         } else {
           setSlugAccessDenied({
             slug,
