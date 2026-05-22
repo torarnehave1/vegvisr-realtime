@@ -31,6 +31,7 @@ import { Login } from './components/Login';
 import { WaitingRoomPanel } from './components/WaitingRoomPanel';
 import { AccessDeniedPage } from './components/AccessDeniedPage';
 import { SlugManagement } from './components/SlugManagement';
+import { SlugJoinPrompt } from './components/SlugJoinPrompt';
 
 const MAGIC_BASE = 'https://cookie.vegvisr.org';
 const DASHBOARD_BASE = 'https://dashboard.vegvisr.org';
@@ -602,6 +603,8 @@ function RealtimeMeeting() {
   // Custom slug state
   const [slugAccessDenied, setSlugAccessDenied] = useState<{ slug: string; ownerEmail: string } | null>(null);
   const [slugLoading, setSlugLoading] = useState(false);
+  const [slugPrompt, setSlugPrompt] = useState<{ slug: string } | null>(null);
+  const [slugPromptError, setSlugPromptError] = useState<string | null>(null);
   // Guest waiting room state
   const [guestWaiting, setGuestWaiting] = useState(false);
   const [guestDenied, setGuestDenied] = useState(false);
@@ -1456,9 +1459,11 @@ function RealtimeMeeting() {
     fetchRecordings();
   }, [activeAccount, lobbyTab]);
 
-  // Validate custom slug and redirect or show access denied
-  const validateAndRedirectSlug = async (slug: string) => {
+  // Validate custom slug. Logged-in users go through pre-join screen via pendingMeetingId.
+  // Guest users (from SlugJoinPrompt) join directly using the returned authToken.
+  const validateAndRedirectSlug = async (slug: string, userEmail: string, isGuest: boolean = false) => {
     setSlugLoading(true);
+    setSlugPromptError(null);
     const stored = readStoredUser();
     try {
       const res = await fetch(`https://api.vegvisr.org/realtime/validate-slug`, {
@@ -1467,25 +1472,33 @@ function RealtimeMeeting() {
           'Content-Type': 'application/json',
           ...(stored?.emailVerificationToken && { 'X-API-Token': stored.emailVerificationToken }),
         },
-        body: JSON.stringify({
-          slug,
-          userEmail: stored?.email || '',
-        }),
+        body: JSON.stringify({ slug, userEmail, requestJoinToken: isGuest }),
       });
       const data = await res.json();
       if (data.success && data.meetingId) {
-        // Approved — redirect to meeting
-        window.history.replaceState({}, '', `/?meetingId=${encodeURIComponent(data.meetingId)}`);
-        setPendingMeetingId(data.meetingId);
+        if (isGuest && data.authToken) {
+          // Guest — join directly with the token returned by validate-slug
+          setSlugPrompt(null);
+          await initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
+        } else {
+          // Logged-in — redirect to pre-join screen (existing flow)
+          window.history.replaceState({}, '', `/?meetingId=${encodeURIComponent(data.meetingId)}`);
+          setPendingMeetingId(data.meetingId);
+        }
       } else {
         // Not approved or slug not found
-        setSlugAccessDenied({
-          slug,
-          ownerEmail: data.ownerEmail || 'unknown',
-        });
+        if (isGuest) {
+          setSlugPromptError(data.error || 'Email not approved for this room');
+        } else {
+          setSlugAccessDenied({
+            slug,
+            ownerEmail: data.ownerEmail || 'unknown',
+          });
+        }
       }
-    } catch (err) {
-      setSlugAccessDenied({ slug, ownerEmail: 'unknown' });
+    } catch (err: any) {
+      if (isGuest) setSlugPromptError(err?.message || 'Failed to validate slug');
+      else setSlugAccessDenied({ slug, ownerEmail: 'unknown' });
     } finally {
       setSlugLoading(false);
     }
@@ -1503,7 +1516,14 @@ function RealtimeMeeting() {
     const slugMatch = pathname.match(/^\/([a-z0-9\-]{3,50})$/);
     if (slugMatch) {
       const slug = slugMatch[1];
-      validateAndRedirectSlug(slug);
+      const stored = readStoredUser();
+      if (stored?.email) {
+        // Logged in — auto-validate with stored email
+        validateAndRedirectSlug(slug, stored.email);
+      } else {
+        // Not logged in — show email entry prompt
+        setSlugPrompt({ slug });
+      }
       return;
     }
 
@@ -2454,6 +2474,17 @@ function RealtimeMeeting() {
   }
 
   // Meeting not initialized yet — show waiting screen
+  // Show slug join prompt for guests (not logged in)
+  if (slugPrompt) {
+    return (
+      <SlugJoinPrompt
+        slug={slugPrompt.slug}
+        onJoin={(email) => validateAndRedirectSlug(slugPrompt.slug, email, true)}
+        loading={slugLoading}
+        error={slugPromptError}
+      />
+    );
+  }
   // Show access denied page if slug validation failed
   if (slugAccessDenied) {
     return <AccessDeniedPage slug={slugAccessDenied.slug} ownerEmail={slugAccessDenied.ownerEmail} />;
