@@ -10,6 +10,7 @@ import {
   RtkChatToggle,
   RtkDialogManager,
   RtkGrid,
+  RtkParticipantTile,
   RtkLeaveButton,
   RtkLogo,
   RtkMeetingTitle,
@@ -32,6 +33,7 @@ import { WaitingRoomPanel } from './components/WaitingRoomPanel';
 import { AccessDeniedPage } from './components/AccessDeniedPage';
 import { SlugManagement } from './components/SlugManagement';
 import { SlugJoinPrompt } from './components/SlugJoinPrompt';
+import { SpeakerView } from './components/SpeakerView';
 
 const MAGIC_BASE = 'https://cookie.vegvisr.org';
 const DASHBOARD_BASE = 'https://dashboard.vegvisr.org';
@@ -196,6 +198,29 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
   const [showRecordingBanner, setShowRecordingBanner] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
+
+  // View mode: 'grid' (default RtkGrid) or 'speaker' (featured tile + thumbnails)
+  // Preference persists across meetings in localStorage.
+  const [viewMode, setViewMode] = useState<'grid' | 'speaker'>(() => {
+    try {
+      const stored = typeof window !== 'undefined' ? localStorage.getItem('vegvisr-view-mode') : null;
+      return stored === 'speaker' ? 'speaker' : 'grid';
+    } catch { return 'grid'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('vegvisr-view-mode', viewMode); } catch { /* ignore */ }
+  }, [viewMode]);
+
+  // Active speaker — peerId of whoever is currently the loudest. Used by SpeakerView.
+  const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!meeting?.participants) return;
+    const handler = (payload: { peerId: string; volume: number }) => {
+      if (payload?.peerId) setActiveSpeakerId(payload.peerId);
+    };
+    meeting.participants.on('activeSpeaker', handler);
+    return () => { meeting.participants.off?.('activeSpeaker', handler); };
+  }, [meeting]);
 
   // Meeting elapsed timer (hh:mm:ss)
   const [meetingSeconds, setMeetingSeconds] = useState(0);
@@ -431,7 +456,16 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
       {/* ────────────────────────────────────────────────────────────────────── */}
 
       <main className="flex flex-1 p-2 min-h-0">
-        <RtkGrid meeting={meeting} config={config} />
+        {viewMode === 'speaker' ? (
+          <SpeakerView
+            meeting={meeting}
+            config={config}
+            states={states}
+            activeSpeakerId={activeSpeakerId}
+          />
+        ) : (
+          <RtkGrid meeting={meeting} config={config} />
+        )}
         {states.activeSidebar && <RtkSidebar meeting={meeting} states={states} />}
       </main>
       <footer className="p-2 flex items-center w-full border-t border-slate-700">
@@ -443,6 +477,38 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
           <RtkCameraToggle meeting={meeting} />
           <RtkScreenShareToggle meeting={meeting} />
           <RtkChatToggle meeting={meeting} />
+          {/* View toggle — Grid view <-> Speaker view */}
+          <button
+            type="button"
+            onClick={() => setViewMode(viewMode === 'grid' ? 'speaker' : 'grid')}
+            title={viewMode === 'grid' ? 'Switch to Speaker view' : 'Switch to Grid view'}
+            aria-label={viewMode === 'grid' ? 'Switch to Speaker view' : 'Switch to Grid view'}
+            className="px-3 py-1.5 rounded text-xs font-medium transition-colors bg-slate-700 hover:bg-slate-600 text-white flex items-center gap-1.5"
+          >
+            {viewMode === 'grid' ? (
+              <>
+                {/* speaker-view icon: one large rect, three small below */}
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="1" y="1" width="14" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+                  <rect x="1" y="12" width="4" height="3" rx="0.5" fill="currentColor" />
+                  <rect x="6" y="12" width="4" height="3" rx="0.5" fill="currentColor" />
+                  <rect x="11" y="12" width="4" height="3" rx="0.5" fill="currentColor" />
+                </svg>
+                <span>Speaker</span>
+              </>
+            ) : (
+              <>
+                {/* grid-view icon: 2x2 */}
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="1" y="1" width="6" height="6" rx="0.5" fill="currentColor" />
+                  <rect x="9" y="1" width="6" height="6" rx="0.5" fill="currentColor" />
+                  <rect x="1" y="9" width="6" height="6" rx="0.5" fill="currentColor" />
+                  <rect x="9" y="9" width="6" height="6" rx="0.5" fill="currentColor" />
+                </svg>
+                <span>Grid</span>
+              </>
+            )}
+          </button>
           <RtkSettingsToggle />
           {/* Record button — only visible to hosts with canRecord permission */}
           {canRecord && (
