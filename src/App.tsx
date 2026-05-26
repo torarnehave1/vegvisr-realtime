@@ -656,6 +656,8 @@ function RealtimeMeeting() {
   const [transcribingKey, setTranscribingKey] = useState<string | null>(null);
   const [transcripts, setTranscripts] = useState<Record<string, string>>({});
   const [transcribeProgress, setTranscribeProgress] = useState<{ current: number; total: number } | null>(null);
+  const [extractingAudioKey, setExtractingAudioKey] = useState<string | null>(null);
+  const [audioExtractError, setAudioExtractError] = useState<Record<string, string>>({});
   const [lobbyTab, setLobbyTab] = useState<'meetings' | 'recordings' | 'slugs'>('meetings');
   const [playingKey, setPlayingKey] = useState<string | null>(null);
   const [copiedTranscript, setCopiedTranscript] = useState<string | null>(null);
@@ -1259,44 +1261,135 @@ function RealtimeMeeting() {
     }
   };
 
+  /**
+   * Download only the audio track of a recording.
+   * Pipeline: fetch video -> decodeAudioData -> WAV blob (44.1kHz stereo) -> save.
+   * Runs entirely in the browser. No backend changes required.
+   */
+  const downloadRecordingAudio = async (rec: any) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    const key = rec.key;
+    setExtractingAudioKey(key);
+    setAudioExtractError(prev => { const next = { ...prev }; delete next[key]; return next; });
+    try {
+      // 1. Fetch the source recording (same logic as transcribeRecording)
+      const params = new URLSearchParams({ token: stored.emailVerificationToken });
+      if (rec.source === 'realtimekit' && rec.download_url) {
+        params.set('rtk_url', rec.download_url);
+      } else {
+        params.set('key', key);
+      }
+      const downloadUrl = `https://api.vegvisr.org/realtime/recordings/download?${params.toString()}`;
+      const dlResp = await fetch(downloadUrl);
+      if (!dlResp.ok) throw new Error(`Download failed: ${dlResp.status} ${dlResp.statusText}`);
+      const arrayBuf = await dlResp.arrayBuffer();
+
+      // 2. Decode audio from the video container
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      let audioBuffer: AudioBuffer;
+      try {
+        audioBuffer = await audioCtx.decodeAudioData(arrayBuf);
+      } finally {
+        try { audioCtx.close(); } catch { /* ignore */ }
+      }
+
+      // 3. Encode to a podcast-quality WAV (44.1 kHz, stereo)
+      const wavBlob = audioBufferToWavBlob(audioBuffer, { sampleRate: 44100, channels: 2 });
+
+      // 4. Trigger a browser file save
+      const baseName = (rec.title || rec.fileName || rec.key || 'recording')
+        .replace(/\.[^.]+$/, '')
+        .replace(/[\\/:*?"<>|]+/g, '-');
+      const url = URL.createObjectURL(wavBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${baseName}.wav`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // Revoke after a beat so the download starts cleanly
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err: any) {
+      const msg = err?.message || 'Audio extraction failed';
+      setAudioExtractError(prev => ({ ...prev, [key]: msg }));
+    } finally {
+      setExtractingAudioKey(null);
+    }
+  };
+
   const CHUNK_DURATION_SECONDS = 120;
   const WHISPER_ENDPOINT = 'https://openai.vegvisr.org/audio';
 
-  const audioBufferToWavBlob = (audioBuffer: AudioBuffer): Blob => {
-    const numberOfChannels = 1; // mono for speech
-    const sampleRate = 16000; // 16kHz for Whisper
+  /**
+   * Encode an AudioBuffer to a 16-bit PCM WAV Blob.
+   * Defaults are tuned for Whisper transcription (16kHz mono).
+   * Pass { sampleRate: 44100, channels: 2 } for podcast-quality stereo downloads.
+   */
+  const audioBufferToWavBlob = (
+    audioBuffer: AudioBuffer,
+    opts: { sampleRate?: number; channels?: 1 | 2 } = {},
+  ): Blob => {
+    const targetRate = opts.sampleRate ?? 16000;
+    const targetChannels: 1 | 2 = opts.channels ?? 1;
     const srcRate = audioBuffer.sampleRate;
-    const ratio = srcRate / sampleRate;
+    const ratio = srcRate / targetRate;
     const newLength = Math.floor(audioBuffer.length / ratio);
-    const buffer = new ArrayBuffer(44 + newLength * 2);
+    const bytesPerSample = 2; // 16-bit PCM
+    const blockAlign = targetChannels * bytesPerSample;
+    const dataSize = newLength * blockAlign;
+    const buffer = new ArrayBuffer(44 + dataSize);
     const view = new DataView(buffer);
     const writeStr = (off: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
     writeStr(0, 'RIFF');
-    view.setUint32(4, 36 + newLength * 2, true);
+    view.setUint32(4, 36 + dataSize, true);
     writeStr(8, 'WAVE');
     writeStr(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, numberOfChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);
+    view.setUint32(16, 16, true);          // PCM fmt chunk size
+    view.setUint16(20, 1, true);           // PCM format
+    view.setUint16(22, targetChannels, true);
+    view.setUint32(24, targetRate, true);
+    view.setUint32(28, targetRate * blockAlign, true); // byte rate
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true);          // bits per sample
     writeStr(36, 'data');
-    view.setUint32(40, newLength * 2, true);
-    // Mix to mono + resample with linear interpolation
+    view.setUint32(40, dataSize, true);
+
     const ch0 = audioBuffer.getChannelData(0);
     const ch1 = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : ch0;
     let offset = 44;
-    for (let i = 0; i < newLength; i++) {
-      const srcIdx = i * ratio;
-      const idx = Math.floor(srcIdx);
-      const frac = srcIdx - idx;
-      const s0 = ((ch0[idx] || 0) + (ch1[idx] || 0)) / 2;
-      const s1 = ((ch0[Math.min(idx + 1, audioBuffer.length - 1)] || 0) + (ch1[Math.min(idx + 1, audioBuffer.length - 1)] || 0)) / 2;
-      const sample = Math.max(-1, Math.min(1, s0 + (s1 - s0) * frac));
-      view.setInt16(offset, sample * 0x7fff, true);
-      offset += 2;
+    const lastIdx = audioBuffer.length - 1;
+
+    if (targetChannels === 1) {
+      // Downmix to mono + resample with linear interpolation
+      for (let i = 0; i < newLength; i++) {
+        const srcIdx = i * ratio;
+        const idx = Math.floor(srcIdx);
+        const frac = srcIdx - idx;
+        const next = Math.min(idx + 1, lastIdx);
+        const s0 = ((ch0[idx] || 0) + (ch1[idx] || 0)) / 2;
+        const s1 = ((ch0[next] || 0) + (ch1[next] || 0)) / 2;
+        const sample = Math.max(-1, Math.min(1, s0 + (s1 - s0) * frac));
+        view.setInt16(offset, sample * 0x7fff, true);
+        offset += 2;
+      }
+    } else {
+      // Preserve stereo + resample. Interleave L, R per frame.
+      for (let i = 0; i < newLength; i++) {
+        const srcIdx = i * ratio;
+        const idx = Math.floor(srcIdx);
+        const frac = srcIdx - idx;
+        const next = Math.min(idx + 1, lastIdx);
+        const l0 = ch0[idx] || 0;
+        const l1 = ch0[next] || 0;
+        const r0 = ch1[idx] || 0;
+        const r1 = ch1[next] || 0;
+        const ls = Math.max(-1, Math.min(1, l0 + (l1 - l0) * frac));
+        const rs = Math.max(-1, Math.min(1, r0 + (r1 - r0) * frac));
+        view.setInt16(offset, ls * 0x7fff, true);
+        view.setInt16(offset + 2, rs * 0x7fff, true);
+        offset += 4;
+      }
     }
     return new Blob([buffer], { type: 'audio/wav' });
   };
@@ -2375,10 +2468,20 @@ function RealtimeMeeting() {
                           <button
                             className="px-2.5 py-1.5 bg-sky-700 hover:bg-sky-600 rounded text-white text-xs"
                             onClick={() => downloadRecording(rec)}
-                            title="Download"
+                            title="Download video"
                           >
                             ⬇
                           </button>
+                          {((rec.source !== 'realtimekit') || !!rec.download_url) && (
+                            <button
+                              className="px-2.5 py-1.5 bg-teal-700 hover:bg-teal-600 rounded text-white text-xs disabled:opacity-40"
+                              onClick={() => downloadRecordingAudio(rec)}
+                              disabled={extractingAudioKey === rec.key}
+                              title="Download audio only (WAV, 44.1 kHz stereo)"
+                            >
+                              {extractingAudioKey === rec.key ? '⏳' : '🎵'}
+                            </button>
+                          )}
                           {((rec.source !== 'realtimekit') || !!rec.download_url) && (
                             <button
                               className="px-2.5 py-1.5 bg-purple-700 hover:bg-purple-600 rounded text-white text-xs disabled:opacity-40"
@@ -2496,6 +2599,13 @@ function RealtimeMeeting() {
                               Cancel
                             </button>
                           </div>
+                        </div>
+                      )}
+
+                      {/* Audio extraction error, if any */}
+                      {audioExtractError[rec.key] && (
+                        <div className="mt-2 text-xs text-red-400">
+                          Audio download failed: {audioExtractError[rec.key]}
                         </div>
                       )}
 
