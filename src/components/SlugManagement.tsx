@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { readStoredUser } from '../lib/auth';
-import { Copy, Trash2, Edit2, Plus } from 'lucide-react';
+import { Copy, Trash2, Edit2, Plus, Link2 } from 'lucide-react';
 
 interface Slug {
   id: string;
@@ -10,6 +10,16 @@ interface Slug {
   allowedEmails: string[];
   active: boolean;
   createdAt: string;
+  scheduledStartAt?: string | null;
+}
+
+/** Convert an ISO timestamp to the local "YYYY-MM-DDTHH:mm" format that <input type="datetime-local"> expects. */
+function isoToLocalInput(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 interface Room {
@@ -29,12 +39,15 @@ export const SlugManagement: React.FC<SlugManagementProps> = ({ userRooms }) => 
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingSlug, setEditingSlug] = useState<Slug | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [shareLinkBusy, setShareLinkBusy] = useState<string | null>(null);
+  const [shareLinkError, setShareLinkError] = useState<Record<string, string>>({});
   const stored = readStoredUser();
 
   const [formData, setFormData] = useState({
     slug: '',
     meetingId: '',
     allowedEmails: '',
+    scheduledStartAt: '', // <input type="datetime-local"> value, local time, no timezone
   });
 
   // Fetch slugs on mount
@@ -107,6 +120,12 @@ export const SlugManagement: React.FC<SlugManagementProps> = ({ userRooms }) => 
 
       const method = editingSlug ? 'POST' : 'POST';
 
+      // datetime-local gives "YYYY-MM-DDTHH:mm" with no timezone. new Date(localStr) interprets
+      // it as local time, then toISOString() converts to UTC. Empty string -> null (clear).
+      const scheduledStartAt = formData.scheduledStartAt
+        ? new Date(formData.scheduledStartAt).toISOString()
+        : null;
+
       const res = await fetch(url, {
         method,
         headers: {
@@ -117,12 +136,13 @@ export const SlugManagement: React.FC<SlugManagementProps> = ({ userRooms }) => 
           slug: formData.slug,
           meetingId: formData.meetingId,
           allowedEmails: emails,
+          scheduledStartAt,
         }),
       });
 
       const data = await res.json();
       if (data.success) {
-        setFormData({ slug: '', meetingId: '', allowedEmails: '' });
+        setFormData({ slug: '', meetingId: '', allowedEmails: '', scheduledStartAt: '' });
         setShowCreateForm(false);
         setEditingSlug(null);
         setError(null);
@@ -164,6 +184,35 @@ export const SlugManagement: React.FC<SlugManagementProps> = ({ userRooms }) => 
     setTimeout(() => setCopied(null), 2000);
   };
 
+  /**
+   * Generate a share link for a slug: mint a token on the server, copy the URL
+   * to the clipboard, and show a brief confirmation using the existing
+   * `copied` state so the UI feedback matches the Copy button.
+   */
+  const generateShareLink = async (s: Slug) => {
+    if (!stored?.emailVerificationToken) return;
+    setShareLinkBusy(s.id);
+    setShareLinkError(prev => { const next = { ...prev }; delete next[s.id]; return next; });
+    try {
+      const res = await fetch(`https://api.vegvisr.org/realtime/slugs/${s.id}/share-token`, {
+        method: 'POST',
+        headers: { 'X-API-Token': stored.emailVerificationToken },
+      });
+      const data = await res.json();
+      if (data.success && data.url) {
+        await navigator.clipboard.writeText(data.url);
+        setCopied(s.slug);
+        setTimeout(() => setCopied(null), 2500);
+      } else {
+        setShareLinkError(prev => ({ ...prev, [s.id]: data.error || 'Failed to generate share link' }));
+      }
+    } catch (err: any) {
+      setShareLinkError(prev => ({ ...prev, [s.id]: err?.message || 'Failed to generate share link' }));
+    } finally {
+      setShareLinkBusy(null);
+    }
+  };
+
   const getRoomLabel = (meetingId: string) => {
     const room = userRooms.find(r => r.id === meetingId);
     if (!room) return meetingId;
@@ -199,7 +248,7 @@ export const SlugManagement: React.FC<SlugManagementProps> = ({ userRooms }) => 
         <button
           onClick={() => {
             setEditingSlug(null);
-            setFormData({ slug: '', meetingId: '', allowedEmails: '' });
+            setFormData({ slug: '', meetingId: '', allowedEmails: '', scheduledStartAt: '' });
             setShowCreateForm(!showCreateForm);
           }}
           className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium flex items-center gap-2 transition"
@@ -250,6 +299,17 @@ export const SlugManagement: React.FC<SlugManagementProps> = ({ userRooms }) => 
             />
           </div>
 
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">Meeting time (optional)</label>
+            <input
+              type="datetime-local"
+              value={formData.scheduledStartAt}
+              onChange={(e) => setFormData({ ...formData, scheduledStartAt: e.target.value })}
+              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-slate-500 text-xs mt-1">Set this to enable share links. Share link is valid 1 hour before to 1 hour after this time.</p>
+          </div>
+
           <div className="flex gap-3">
             <button
               type="submit"
@@ -262,7 +322,7 @@ export const SlugManagement: React.FC<SlugManagementProps> = ({ userRooms }) => 
               onClick={() => {
                 setShowCreateForm(false);
                 setEditingSlug(null);
-                setFormData({ slug: '', meetingId: '', allowedEmails: '' });
+                setFormData({ slug: '', meetingId: '', allowedEmails: '', scheduledStartAt: '' });
               }}
               className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium transition"
             >
@@ -303,7 +363,22 @@ export const SlugManagement: React.FC<SlugManagementProps> = ({ userRooms }) => 
                 >
                   <Copy size={16} />
                 </button>
+
+                <button
+                  onClick={() => generateShareLink(s)}
+                  disabled={!s.scheduledStartAt || shareLinkBusy === s.id}
+                  title={s.scheduledStartAt
+                    ? 'Generate share link (1 hour before to 1 hour after meeting time)'
+                    : 'Set a meeting time first to enable share links'}
+                  className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed"
+                >
+                  <Link2 size={16} />
+                </button>
+
                 {copied === s.slug && <span className="text-xs text-green-400">Copied!</span>}
+                {shareLinkError[s.id] && (
+                  <span className="text-xs text-red-400 max-w-[200px] truncate" title={shareLinkError[s.id]}>{shareLinkError[s.id]}</span>
+                )}
 
                 <button
                   onClick={() => {
@@ -312,6 +387,7 @@ export const SlugManagement: React.FC<SlugManagementProps> = ({ userRooms }) => 
                       slug: s.slug,
                       meetingId: s.meetingId,
                       allowedEmails: s.allowedEmails.join('\n'),
+                      scheduledStartAt: isoToLocalInput(s.scheduledStartAt),
                     });
                     setShowCreateForm(true);
                   }}

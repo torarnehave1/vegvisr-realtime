@@ -1620,10 +1620,19 @@ function RealtimeMeeting() {
 
   // Validate custom slug. Logged-in users go through pre-join screen via pendingMeetingId.
   // Guest users (from SlugJoinPrompt) join directly using the returned authToken.
-  const validateAndRedirectSlug = async (slug: string, userEmail: string, isGuest: boolean = false) => {
+  const validateAndRedirectSlug = async (
+    slug: string,
+    userEmail: string,
+    isGuest: boolean = false,
+    shareToken?: string,
+  ) => {
     setSlugLoading(true);
     setSlugPromptError(null);
     const stored = readStoredUser();
+    // Share-link path is effectively a guest direct-join: the backend mints the
+    // RealtimeKit token in the same response, and we use it to join immediately.
+    const useShareToken = Boolean(shareToken);
+    const effectivelyGuest = isGuest || useShareToken;
     try {
       const res = await fetch(`https://api.vegvisr.org/realtime/validate-slug`, {
         method: 'POST',
@@ -1631,22 +1640,34 @@ function RealtimeMeeting() {
           'Content-Type': 'application/json',
           ...(stored?.emailVerificationToken && { 'X-API-Token': stored.emailVerificationToken }),
         },
-        body: JSON.stringify({ slug, userEmail, requestJoinToken: isGuest }),
+        body: JSON.stringify({
+          slug,
+          userEmail: useShareToken ? undefined : userEmail,
+          requestJoinToken: effectivelyGuest,
+          shareToken: useShareToken ? shareToken : undefined,
+        }),
       });
       const data = await res.json();
       if (data.success && data.meetingId) {
-        if (isGuest && data.authToken) {
-          // Guest — join directly with the token returned by validate-slug
+        if (effectivelyGuest && data.authToken) {
+          // Guest / share-link — join directly with the token returned by validate-slug
           setSlugPrompt(null);
           await initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
         } else {
-          // Logged-in — redirect to pre-join screen (existing flow)
+          // Logged-in (no share token) — redirect to pre-join screen (existing flow)
           window.history.replaceState({}, '', `/?meetingId=${encodeURIComponent(data.meetingId)}`);
           setPendingMeetingId(data.meetingId);
         }
       } else {
         // Not approved or slug not found
-        if (isGuest) {
+        if (useShareToken) {
+          // Share-link failures land on the existing access-denied surface; the
+          // backend already returns a clear error string for revoked/expired.
+          setSlugAccessDenied({
+            slug,
+            ownerEmail: data.ownerEmail || 'unknown',
+          });
+        } else if (isGuest) {
           // Map status codes to friendly, non-technical messages
           let friendly = 'Something went wrong. Please try again.';
           if (res.status === 403) {
@@ -1665,7 +1686,7 @@ function RealtimeMeeting() {
         }
       }
     } catch (err: any) {
-      if (isGuest) setSlugPromptError(err?.message || 'Failed to validate slug');
+      if (isGuest && !useShareToken) setSlugPromptError(err?.message || 'Failed to validate slug');
       else setSlugAccessDenied({ slug, ownerEmail: 'unknown' });
     } finally {
       setSlugLoading(false);
@@ -1684,8 +1705,13 @@ function RealtimeMeeting() {
     const slugMatch = pathname.match(/^\/([a-z0-9\-]{3,50})$/);
     if (slugMatch) {
       const slug = slugMatch[1];
+      const shareToken = searchParams.get('t');
       const stored = readStoredUser();
-      if (stored?.email) {
+      if (shareToken) {
+        // Share-link path: skip email entry, validate token and join directly.
+        // Works regardless of login state.
+        validateAndRedirectSlug(slug, '', true, shareToken);
+      } else if (stored?.email) {
         // Logged in — auto-validate with stored email
         validateAndRedirectSlug(slug, stored.email);
       } else {
