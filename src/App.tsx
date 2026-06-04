@@ -222,6 +222,66 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
     return () => { meeting.participants.off?.('activeSpeaker', handler); };
   }, [meeting]);
 
+  // ── Music mode ──────────────────────────────────────────────────────────────
+  // When enabled, the local mic is captured with echo cancellation, noise
+  // suppression, and auto-gain turned OFF, plus stereo + high bitrate ON. That
+  // lets BlackHole (or other virtual audio devices) route system / music audio
+  // into the meeting without the browser's voice-processing chopping it up.
+  // Caveat: in voice meetings this lets through more echo if no headphones.
+  const [musicMode, setMusicMode] = useState<boolean>(() => {
+    try { return typeof window !== 'undefined' && localStorage.getItem('vegvisr-music-mode') === 'on'; }
+    catch { return false; }
+  });
+  const [musicModeBusy, setMusicModeBusy] = useState(false);
+  const [musicModeError, setMusicModeError] = useState<string | null>(null);
+
+  const applyAudioConstraints = async (wantMusic: boolean) => {
+    if (!meeting?.self) return;
+    setMusicModeBusy(true);
+    setMusicModeError(null);
+    try {
+      // Preserve the currently-selected mic device so toggling doesn't change source.
+      const currentDeviceId = meeting.self.audioTrack?.getSettings?.()?.deviceId;
+      const constraints: MediaTrackConstraints = wantMusic
+        ? {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+            channelCount: 2,
+            // sampleRate hint; not all browsers honour it
+            sampleRate: 48000,
+          }
+        : {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          };
+      if (currentDeviceId) (constraints as any).deviceId = { exact: currentDeviceId };
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints, video: false });
+      const newTrack = stream.getAudioTracks()[0];
+      if (!newTrack) throw new Error('No audio track obtained');
+      // enableAudio with a custom track swaps the live mic source in-place.
+      await meeting.self.enableAudio(newTrack);
+    } catch (err: any) {
+      setMusicModeError(err?.message || 'Could not switch audio mode');
+      throw err;
+    } finally {
+      setMusicModeBusy(false);
+    }
+  };
+
+  const toggleMusicMode = async () => {
+    const next = !musicMode;
+    setMusicMode(next);
+    try { localStorage.setItem('vegvisr-music-mode', next ? 'on' : 'off'); } catch { /* ignore */ }
+    // Only push new constraints if audio is currently enabled; otherwise the
+    // toggle just stores the preference and the SDK will use its defaults next
+    // time the mic is enabled.
+    if (meeting?.self?.audioEnabled) {
+      try { await applyAudioConstraints(next); } catch { setMusicMode(!next); }
+    }
+  };
+
   // Meeting elapsed timer (hh:mm:ss)
   const [meetingSeconds, setMeetingSeconds] = useState(0);
   useEffect(() => {
@@ -508,6 +568,27 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
                 <span>Grid</span>
               </>
             )}
+          </button>
+          {/* Music mode — disables voice processing so system audio (e.g. via
+              BlackHole) reaches participants without being chopped up. */}
+          <button
+            type="button"
+            onClick={toggleMusicMode}
+            disabled={musicModeBusy}
+            title={musicMode
+              ? (musicModeError ? `Music mode on (last error: ${musicModeError})` : 'Music mode is ON — disable to use voice processing')
+              : 'Music mode is OFF — enable for clean system-audio capture (e.g. via BlackHole)'}
+            aria-pressed={musicMode}
+            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors text-white flex items-center gap-1.5 disabled:opacity-50 ${
+              musicMode ? 'bg-purple-600 hover:bg-purple-500' : 'bg-slate-700 hover:bg-slate-600'
+            }`}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M6 12V4l7-1v8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <circle cx="4.5" cy="12" r="1.5" fill="currentColor" />
+              <circle cx="11.5" cy="11" r="1.5" fill="currentColor" />
+            </svg>
+            <span>{musicMode ? 'Music ON' : 'Music'}</span>
           </button>
           <RtkSettingsToggle />
           {/* Record button — only visible to hosts with canRecord permission */}
