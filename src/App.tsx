@@ -223,11 +223,10 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
   }, [meeting]);
 
   // ── Music mode ──────────────────────────────────────────────────────────────
-  // When enabled, the local mic is captured with echo cancellation, noise
-  // suppression, and auto-gain turned OFF, plus stereo + high bitrate ON. That
-  // lets BlackHole (or other virtual audio devices) route system / music audio
-  // into the meeting without the browser's voice-processing chopping it up.
-  // Caveat: in voice meetings this lets through more echo if no headphones.
+  // When enabled, the local mic is captured with noise suppression and
+  // auto-gain turned OFF (these were the ones chopping music into pieces),
+  // plus stereo ON. Echo cancellation stays ON so the speaker -> mic loop
+  // doesn't bleed back to other participants when system audio is playing.
   const [musicMode, setMusicMode] = useState<boolean>(() => {
     try { return typeof window !== 'undefined' && localStorage.getItem('vegvisr-music-mode') === 'on'; }
     catch { return false; }
@@ -244,7 +243,9 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
       const currentDeviceId = meeting.self.audioTrack?.getSettings?.()?.deviceId;
       const constraints: MediaTrackConstraints = wantMusic
         ? {
-            echoCancellation: false,
+            // EC stays on — it removes the speaker -> mic loop without gating music.
+            echoCancellation: true,
+            // NS + AGC stay off — these are the ones that mistake music for noise.
             noiseSuppression: false,
             autoGainControl: false,
             channelCount: 2,
