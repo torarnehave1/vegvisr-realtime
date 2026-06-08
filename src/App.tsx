@@ -2477,7 +2477,8 @@ function RealtimeMeeting() {
                   return portfolioName(b).localeCompare(portfolioName(a));
                 });
               })().map((rec: any) => {
-                const isSuperadmin = readStoredUser()?.role === 'Superadmin';
+                // Admin + Superadmin may manage their own recordings (rename / edit / delete).
+                const canManageRecs = canRoleManageMeetings(readStoredUser()?.role);
                 const sizeStr = rec.size > 1024 * 1024
                   ? `${(rec.size / (1024 * 1024)).toFixed(1)} MB`
                   : `${(rec.size / 1024).toFixed(0)} KB`;
@@ -2602,7 +2603,7 @@ function RealtimeMeeting() {
                                 : '📝 Transcribe'}
                             </button>
                           )}
-                          {isSuperadmin && (
+                          {canManageRecs && (
                             <>
                               {(rec.source === 'r2' || rec.source === 'r2-own') && (
                                 <button
