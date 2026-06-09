@@ -1959,7 +1959,7 @@ function RealtimeMeeting() {
           >
             🎬 Recordings {recordings.length > 0 && <span className="ml-1 text-xs bg-slate-700 rounded-full px-1.5">{recordings.length}</span>}
           </button>
-          {readStoredUser()?.role === 'Superadmin' && (
+          {canRoleManageMeetings(readStoredUser()?.role) && (
             <button
               className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${lobbyTab === 'slugs' ? 'text-white border-b-2 border-emerald-500 bg-slate-800/50' : 'text-slate-400 hover:text-white'}`}
               onClick={() => setLobbyTab('slugs')}
