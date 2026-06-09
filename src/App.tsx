@@ -34,6 +34,7 @@ import { AccessDeniedPage } from './components/AccessDeniedPage';
 import { SlugManagement } from './components/SlugManagement';
 import { SlugJoinPrompt } from './components/SlugJoinPrompt';
 import { SpeakerView } from './components/SpeakerView';
+import ImpersonationBar from './components/ImpersonationBar';
 
 const MAGIC_BASE = 'https://cookie.vegvisr.org';
 const DASHBOARD_BASE = 'https://dashboard.vegvisr.org';
@@ -1944,6 +1945,9 @@ function RealtimeMeeting() {
         <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-700">
           <img src="https://favicons.vegvisr.org/favicons/1774561024334-1-1774561031809-512x512.png" alt="Vegvisr Realtime" style={{ width: '200px', height: '200px' }} />
         </div>
+
+        {/* System Owner "Login as…" control + impersonation banner */}
+        <ImpersonationBar />
 
         {/* Tab navigation */}
         <div className="flex border-b border-slate-700">
