@@ -1,9 +1,7 @@
-import React, { useState, useEffect, useReducer, useCallback, createContext, useContext } from 'react';
+import React, { useState, useEffect, createContext, useContext } from 'react';
 import {
   RealtimeKitProvider,
   useRealtimeKitClient,
-  useRealtimeKitMeeting,
-  useRealtimeKitSelector,
 } from '@cloudflare/realtimekit-react';
 import {
   RtkCameraToggle,
@@ -23,7 +21,6 @@ import {
   RtkSidebar,
   RtkSpinner,
   RtkUiProvider,
-  defaultConfig,
   provideRtkDesignSystem,
 } from '@cloudflare/realtimekit-react-ui';
 import { AuthBar, EcosystemNav } from 'vegvisr-ui-kit';
@@ -35,6 +32,10 @@ import { SlugManagement } from './components/SlugManagement';
 import { SlugJoinPrompt } from './components/SlugJoinPrompt';
 import { SpeakerView } from './components/SpeakerView';
 import ImpersonationBar from './components/ImpersonationBar';
+import { useMeetingSession } from './hooks/useMeetingSession';
+import { config } from './lib/rtkConfig';
+import { MobileMeeting } from './components/MobileMeeting';
+import { useIsMobile } from './hooks/useIsMobile';
 
 const MAGIC_BASE = 'https://cookie.vegvisr.org';
 const DASHBOARD_BASE = 'https://dashboard.vegvisr.org';
@@ -104,71 +105,39 @@ const normalizeStandardRooms = (data: any): StandardRoom[] => {
 
 // ─── Meeting UI ──────────────────────────────────────────────────────────────
 
-const config = { ...defaultConfig };
-if (config.root) {
-  config.root['rtk-participant-tile'] = (
-    config.root['rtk-participant-tile'] as any
-  ).children;
-}
-
 function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) {
-  const { meeting } = useRealtimeKitMeeting();
-  const roomJoined = useRealtimeKitSelector((m) => m.self.roomJoined);
-  const roomState = useRealtimeKitSelector((m) => m.self.roomState);
-  const selfName = useRealtimeKitSelector((m) => m.self.name);
-  const canRecord = useRealtimeKitSelector((m) => m.self.permissions.canRecord);
+  const {
+    meeting,
+    roomJoined,
+    roomState,
+    selfName,
+    canRecord,
+    viewMode,
+    setViewMode,
+    activeSpeakerId,
+    meetingSeconds,
+    fmtTime,
+    isRecording,
+    isPaused,
+    isStarting,
+    isStopping,
+    recordingBusy,
+    showRecordingBanner,
+    recSeconds,
+    toggleRecording,
+    togglePauseRecording,
+    waitingGuests,
+    admitGuest,
+    denyGuest,
+    states,
+    updateStates,
+  } = useMeetingSession({ meetingId, isHost, allowDuo: false });
 
-  // Guard: ensure meeting.join() is called at most once per mount
-  const joinCalledRef = React.useRef(false);
-
-  // ── Waiting room (host only) ──────────────────────────────────────────────
-  const [waitingGuests, setWaitingGuests] = useState<any[]>([]);
+  // ── Waiting room modal — UI-only state, kept local to the desktop layout ──
   const [showWaitlist, setShowWaitlist] = useState(true);
   // Draggable modal position
   const [dragPos, setDragPos] = useState({ x: window.innerWidth - 320, y: 60 });
   const dragRef = React.useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
-
-  // Simple polling — no useCallback, no stale closure tricks
-  useEffect(() => {
-    if (!isHost || !meetingId) return;
-    const poll = async () => {
-      const stored = readStoredUser();
-      if (!stored?.emailVerificationToken) return;
-      try {
-        const r = await fetch(
-          `https://api.vegvisr.org/realtime/waiting-room/list?meetingId=${encodeURIComponent(meetingId)}`,
-          { headers: { 'X-API-Token': stored.emailVerificationToken } }
-        );
-        const data = await r.json();
-        if (data.success) setWaitingGuests(data.guests || []);
-      } catch { /* ignore */ }
-    };
-    poll(); // immediate first call
-    const iv = setInterval(poll, 4000);
-    return () => clearInterval(iv);
-  }, [isHost, meetingId]);
-
-  const admitGuest = async (guestEmail: string) => {
-    const stored = readStoredUser();
-    if (!stored?.emailVerificationToken) return;
-    await fetch('https://api.vegvisr.org/realtime/waiting-room/admit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-Token': stored.emailVerificationToken },
-      body: JSON.stringify({ meetingId, guestEmail }),
-    });
-    setWaitingGuests((prev) => prev.filter((g) => g.guest_email !== guestEmail));
-  };
-
-  const denyGuest = async (guestEmail: string) => {
-    const stored = readStoredUser();
-    if (!stored?.emailVerificationToken) return;
-    await fetch('https://api.vegvisr.org/realtime/waiting-room/deny', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-Token': stored.emailVerificationToken },
-      body: JSON.stringify({ meetingId, guestEmail }),
-    });
-    setWaitingGuests((prev) => prev.filter((g) => g.guest_email !== guestEmail));
-  };
 
   const onDragStart = (e: React.MouseEvent) => {
     dragRef.current = { startX: e.clientX, startY: e.clientY, origX: dragPos.x, origY: dragPos.y };
@@ -189,39 +158,8 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
   };
   // ─────────────────────────────────────────────────────────────────────────
 
-  const [states, updateStates] = useReducer(
-    (state: any, payload: any) => ({ ...state, ...payload }),
-    { meeting: 'joined', activeSidebar: false },
-  );
-
-  const [recordingState, setRecordingState] = useState<string>('IDLE');
-  const [recordingBusy, setRecordingBusy] = useState(false);
-  const [showRecordingBanner, setShowRecordingBanner] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
-
-  // View mode: 'grid' (default RtkGrid) or 'speaker' (featured tile + thumbnails)
-  // Preference persists across meetings in localStorage.
-  const [viewMode, setViewMode] = useState<'grid' | 'speaker'>(() => {
-    try {
-      const stored = typeof window !== 'undefined' ? localStorage.getItem('vegvisr-view-mode') : null;
-      return stored === 'speaker' ? 'speaker' : 'grid';
-    } catch { return 'grid'; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem('vegvisr-view-mode', viewMode); } catch { /* ignore */ }
-  }, [viewMode]);
-
-  // Active speaker — peerId of whoever is currently the loudest. Used by SpeakerView.
-  const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
-  useEffect(() => {
-    if (!meeting?.participants) return;
-    const handler = (payload: { peerId: string; volume: number }) => {
-      if (payload?.peerId) setActiveSpeakerId(payload.peerId);
-    };
-    meeting.participants.on('activeSpeaker', handler);
-    return () => { meeting.participants.off?.('activeSpeaker', handler); };
-  }, [meeting]);
 
   // ── Music mode ──────────────────────────────────────────────────────────────
   // When enabled, the local mic is captured with noise suppression and
@@ -284,91 +222,6 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
     }
   };
 
-  // Meeting elapsed timer (hh:mm:ss)
-  const [meetingSeconds, setMeetingSeconds] = useState(0);
-  useEffect(() => {
-    if (!roomJoined) return;
-    setMeetingSeconds(0);
-    const iv = setInterval(() => setMeetingSeconds((s) => s + 1), 1000);
-    return () => clearInterval(iv);
-  }, [roomJoined]);
-
-  const [recSeconds, setRecSeconds] = useState(0);
-
-  const fmtTime = (totalSec: number) => {
-    const h = Math.floor(totalSec / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    const s = totalSec % 60;
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  };
-
-  // Subscribe to recording state changes
-  useEffect(() => {
-    if (!meeting?.recording) return;
-    const rec = meeting.recording;
-    setRecordingState(rec.recordingState);
-    const handler = (state: string) => setRecordingState(state);
-    rec.on('recordingUpdate', handler);
-    return () => { rec.removeListener('recordingUpdate', handler); };
-  }, [meeting]);
-
-  const isRecording = recordingState === 'RECORDING';
-  const isPaused = recordingState === 'PAUSED';
-  const isStarting = recordingState === 'STARTING';
-  const isStopping = recordingState === 'STOPPING';
-
-  // Recording elapsed timer — ticks while RECORDING, holds while PAUSED, resets on IDLE/STOPPING
-  useEffect(() => {
-    if (isRecording) {
-      const iv = setInterval(() => setRecSeconds((s) => s + 1), 1000);
-      return () => clearInterval(iv);
-    }
-    if (isPaused) return; // keep current value, don't tick
-    setRecSeconds(0); // reset on stop/idle
-  }, [isRecording, isPaused]);
-
-  // Show banner briefly when recording starts
-  useEffect(() => {
-    if (isRecording || isStarting) {
-      setShowRecordingBanner(true);
-      const timer = setTimeout(() => setShowRecordingBanner(false), 3000);
-      return () => clearTimeout(timer);
-    }
-    setShowRecordingBanner(false);
-  }, [isRecording, isStarting]);
-
-  const toggleRecording = useCallback(async () => {
-    if (!meeting?.recording) return;
-    setRecordingBusy(true);
-    try {
-      if (isRecording || isPaused) {
-        await meeting.recording.stop();
-      } else {
-        await meeting.recording.start();
-      }
-    } catch (err: any) {
-      console.error('Recording error:', err);
-    } finally {
-      setRecordingBusy(false);
-    }
-  }, [meeting, isRecording, isPaused]);
-
-  const togglePauseRecording = useCallback(async () => {
-    if (!meeting?.recording) return;
-    setRecordingBusy(true);
-    try {
-      if (isPaused) {
-        await meeting.recording.resume();
-      } else {
-        await meeting.recording.pause();
-      }
-    } catch (err: any) {
-      console.error('Recording pause/resume error:', err);
-    } finally {
-      setRecordingBusy(false);
-    }
-  }, [meeting, isPaused]);
-
   if (!meeting) return <RtkSpinner />;
 
 
@@ -389,10 +242,6 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
     );
   }
   if (!roomJoined) {
-    if (roomState === 'init' && meeting && !joinCalledRef.current) {
-      joinCalledRef.current = true;
-      (meeting as any).join().catch((e: any) => console.error('auto-join error:', e));
-    }
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-slate-200">
         <div className="w-8 h-8 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" />
@@ -689,6 +538,7 @@ function GuestWaitingScreen({
 
 function RealtimeMeeting() {
   const [meeting, initMeeting] = useRealtimeKitClient();
+  const isMobile = useIsMobile();
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [noParams, setNoParams] = useState(false);
   const [waitingScreenInfo, setWaitingScreenInfo] = useState<{
@@ -2870,7 +2720,11 @@ function RealtimeMeeting() {
       <div className="flex-1 min-h-0">
         <RealtimeKitProvider value={meeting}>
           <RtkUiProvider meeting={meeting} showSetupScreen>
-            <Meeting meetingId={activeMeetingId ?? ''} isHost={isCallHost} />
+            {isMobile ? (
+              <MobileMeeting meetingId={activeMeetingId ?? ''} isHost={isCallHost} />
+            ) : (
+              <Meeting meetingId={activeMeetingId ?? ''} isHost={isCallHost} />
+            )}
             <RtkDialogManager />
             <RtkSettings />
             <RtkParticipantsAudio />
