@@ -175,6 +175,47 @@ export function useMeetingSession({ meetingId, isHost, allowDuo = false }: Optio
 
   // ── Waiting room (host only) ───────────────────────────────────────────────
   const [waitingGuests, setWaitingGuests] = useState<any[]>([]);
+  // Refs survive re-renders. seenGuests holds the email set we'd already
+  // notified for; pingCtx is a lazy AudioContext we only create after the
+  // first user gesture (browsers block AudioContext autoplay otherwise).
+  const seenGuests = useRef<Set<string>>(new Set());
+  const pingCtxRef = useRef<AudioContext | null>(null);
+
+  /**
+   * Play a short two-tone "pling" via Web Audio. Self-contained — no asset
+   * file to host or load. Calls into AudioContext lazily on first use; the
+   * meeting page has had user gesture by then (host clicked "Join"), so
+   * autoplay restrictions don't apply.
+   */
+  const playPling = useCallback(() => {
+    try {
+      if (!pingCtxRef.current) {
+        const Ctor = window.AudioContext || (window as any).webkitAudioContext;
+        if (!Ctor) return;
+        pingCtxRef.current = new Ctor();
+      }
+      const ctx = pingCtxRef.current;
+      const now = ctx.currentTime;
+      // Two short sine notes: a 4 → e 5 (gentle, recognizable)
+      const note = (freq: number, start: number, dur: number, vol: number) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0, now + start);
+        gain.gain.linearRampToValueAtTime(vol, now + start + 0.01);
+        gain.gain.linearRampToValueAtTime(0, now + start + dur);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(now + start);
+        osc.stop(now + start + dur + 0.05);
+      };
+      note(880, 0, 0.18, 0.2);   // A5
+      note(1318, 0.18, 0.25, 0.2); // E6
+    } catch {
+      /* audio failure should never break the meeting */
+    }
+  }, []);
+
   useEffect(() => {
     if (!isHost || !meetingId) return;
     const poll = async () => {
@@ -186,7 +227,30 @@ export function useMeetingSession({ meetingId, isHost, allowDuo = false }: Optio
           { headers: { 'X-API-Token': stored.emailVerificationToken } },
         );
         const data = await r.json();
-        if (data.success) setWaitingGuests(data.guests || []);
+        if (data.success) {
+          const guests = data.guests || [];
+          // Detect new arrivals vs. previously-seen list. Skip pling on the
+          // very first poll (when seenGuests is empty AND guests are present)
+          // — those guests joined before the host opened the page, so they're
+          // not "new" from a notification standpoint.
+          const isFirstPoll = seenGuests.current.size === 0 && waitingGuests.length === 0;
+          let newArrivals = 0;
+          for (const g of guests) {
+            const key = g.guest_email;
+            if (!key) continue;
+            if (!seenGuests.current.has(key)) {
+              seenGuests.current.add(key);
+              if (!isFirstPoll) newArrivals++;
+            }
+          }
+          // Drop emails no longer in waiting list so re-knocks ping again.
+          const stillWaiting = new Set(guests.map((g: any) => g.guest_email));
+          for (const seen of seenGuests.current) {
+            if (!stillWaiting.has(seen)) seenGuests.current.delete(seen);
+          }
+          if (newArrivals > 0) playPling();
+          setWaitingGuests(guests);
+        }
       } catch {
         /* ignore */
       }
@@ -194,7 +258,8 @@ export function useMeetingSession({ meetingId, isHost, allowDuo = false }: Optio
     poll(); // immediate first call
     const iv = setInterval(poll, 4000);
     return () => clearInterval(iv);
-  }, [isHost, meetingId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, meetingId, playPling]);
 
   const admitGuest = useCallback(
     async (guestEmail: string) => {
