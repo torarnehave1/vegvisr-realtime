@@ -2904,13 +2904,19 @@ function AuthGate({ children }: { children: React.ReactNode }) {
               />
               <ScreenRecorder />
             </div>
-            <AuthBar
-              userEmail={authUser?.email}
-              badgeLabel="Vegvisr"
-              signInLabel="Sign in"
-              logoutLabel="Log out"
-              onLogout={handleLogout}
-            />
+            {/* Wrapped so the index.css media query can hide AuthBar's email
+                badge on small screens — its letter-spacing:0.3em + the email
+                text together exceed the right-side budget on a Samsung-sized
+                portrait viewport, pushing the page wider than 412px. */}
+            <div className="header-authbar">
+              <AuthBar
+                userEmail={authUser?.email}
+                badgeLabel="Vegvisr"
+                signInLabel="Sign in"
+                logoutLabel="Log out"
+                onLogout={handleLogout}
+              />
+            </div>
           </div>
           <div className="flex-1 min-h-0">
             {children}

@@ -23,3 +23,18 @@ rtk-participant-tile::part(video) {
   object-fit: contain !important;
   background: #000;
 }
+
+/* ──────────────────────────────────────────────────────────────────────────────
+ * Mobile top-bar — hide the "Vegvisr / <email>" badge on small screens.
+ * The badge from vegvisr-ui-kit/AuthBar uses letter-spacing:0.3em which makes
+ * an email like torarnehave@gmail.com ~250px wide; combined with the Log out
+ * button it pushes the AuthBar group past the right edge of a 412px-wide
+ * portrait viewport, causing the whole page to overflow horizontally.
+ * Hide only the badge (AuthBar's first child div). The Log-out button stays.
+ * Threshold 640px matches Tailwind's `sm:` breakpoint.
+ * ────────────────────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .header-authbar > div > div:first-child {
+    display: none !important;
+  }
+}
