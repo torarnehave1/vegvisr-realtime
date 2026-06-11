@@ -7,3 +7,20 @@ body {
   min-height: 100vh;
   font-family: "Inter", system-ui, -apple-system, sans-serif;
 }
+
+/* ──────────────────────────────────────────────────────────────────────────────
+ * Show the whole video tile content rather than cropping top/bottom.
+ * RealtimeKit's participant tile renders the camera stream inside a
+ * shadow-DOM <video> with object-fit: cover by default. That crops portrait
+ * phone video into a landscape tile, hiding the participant's face. Switching
+ * to "contain" gives Zoom/Meet-style letterboxing on the sides instead.
+ * Targets every <video> inside an rtk-participant-tile across the open shadow
+ * root using the ::part / >>> pattern (RealtimeKit re-uses standard
+ * Stencil components so the descendant selector works for the light DOM).
+ * ────────────────────────────────────────────────────────────────────────── */
+rtk-participant-tile video,
+rtk-grid video,
+rtk-mixed-grid video {
+  object-fit: contain !important;
+  background: #000;
+}
