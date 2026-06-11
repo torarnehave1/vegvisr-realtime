@@ -2718,20 +2718,14 @@ function RealtimeMeeting() {
       )}
       <div className="flex-1 min-h-0">
         <RealtimeKitProvider value={meeting}>
-          {/* showSetupScreen renders RealtimeKit's preview-then-join UI before
-              roomJoined turns true. MobileMeeting overlays its "Joining…"
-              spinner during that window, which hid the setup screen's Join
-              button and left mobile users stuck in a half-joined state.
-              On mobile we skip the preview entirely — initMeeting() defaults
-              already join with audio/video off, and users enable both via the
-              in-meeting footer once they're connected. Desktop keeps the
-              preview because there's room for it. */}
-          <RtkUiProvider meeting={meeting} showSetupScreen={!isMobile}>
-            {isMobile ? (
-              <MobileMeeting meetingId={activeMeetingId ?? ''} isHost={isCallHost} />
-            ) : (
-              <Meeting meetingId={activeMeetingId ?? ''} isHost={isCallHost} />
-            )}
+          {/* Temporary: render the desktop <Meeting> for mobile too while
+              MobileMeeting's auto-hiding controls regression is being fixed.
+              MobileMeeting hides the camera button after a few seconds, which
+              left mobile users unable to enable their camera. Revert to the
+              pre-MobileMeeting (e22f97c) behaviour: same Meeting layout on
+              every viewport, controls always visible. */}
+          <RtkUiProvider meeting={meeting} showSetupScreen>
+            <Meeting meetingId={activeMeetingId ?? ''} isHost={isCallHost} />
             <RtkDialogManager />
             <RtkSettings />
             <RtkParticipantsAudio />
