@@ -111,7 +111,7 @@ export default function ImpersonationBar() {
   if (!users || users.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-2 px-4 py-2 bg-slate-800/60 border-b border-slate-700 text-sm">
+    <div className="flex flex-wrap items-center gap-2 px-4 py-2 bg-slate-800/60 border-b border-slate-700 text-sm">
       <label htmlFor="impersonate-user" className="text-slate-400 text-xs whitespace-nowrap">
         🔑 Login as
       </label>
@@ -119,7 +119,7 @@ export default function ImpersonationBar() {
         id="impersonate-user"
         value={selected}
         onChange={(e) => setSelected(e.target.value)}
-        className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-xs focus:outline-none focus:border-sky-500"
+        className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-xs focus:outline-none focus:border-sky-500 flex-1 min-w-0 max-w-full sm:max-w-xs"
       >
         <option value="">Select a user…</option>
         {users
