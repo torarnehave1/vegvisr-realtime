@@ -441,9 +441,17 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
             </svg>
             <span>{musicMode ? 'Music ON' : 'Music'}</span>
           </button>
-          <RtkSettingsToggle />
-          {/* Record button — only visible to hosts with canRecord permission */}
-          {canRecord && (
+          {/* Settings cog hidden on mobile (Tailwind `sm:` = >=640px).
+              The Settings dialog is still reachable from the participant tile
+              long-press; the footer cog just duplicates that on mobile. */}
+          <span className="hidden sm:inline-flex">
+            <RtkSettingsToggle />
+          </span>
+          {/* Record button — only visible to the meeting host AND when the
+              user's RealtimeKit permissions allow recording. The extra isHost
+              gate keeps the button off guest screens even if the preset
+              accidentally grants canRecord. */}
+          {canRecord && isHost && (
             <>
               <button
                 className={`px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
