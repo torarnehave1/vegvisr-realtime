@@ -386,7 +386,11 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
         <div className="flex gap-2 justify-center flex-1">
           <RtkMicToggle meeting={meeting} />
           <RtkCameraToggle meeting={meeting} />
-          <RtkScreenShareToggle meeting={meeting} />
+          {/* Screen-share hidden on mobile — Chrome on Android can't capture
+              screen via getDisplayMedia anyway. Tailwind sm: = >=640px. */}
+          <span className="hidden sm:inline-flex">
+            <RtkScreenShareToggle meeting={meeting} />
+          </span>
           <RtkChatToggle meeting={meeting} />
           {/* View toggle — Grid view <-> Speaker view */}
           <button
@@ -421,7 +425,8 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
             )}
           </button>
           {/* Music mode — disables voice processing so system audio (e.g. via
-              BlackHole) reaches participants without being chopped up. */}
+              BlackHole) reaches participants without being chopped up.
+              Hidden on mobile per user request — niche desktop-only feature. */}
           <button
             type="button"
             onClick={toggleMusicMode}
@@ -430,7 +435,7 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
               ? (musicModeError ? `Music mode on (last error: ${musicModeError})` : 'Music mode is ON — disable to use voice processing')
               : 'Music mode is OFF — enable for clean system-audio capture (e.g. via BlackHole)'}
             aria-pressed={musicMode}
-            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors text-white flex items-center gap-1.5 disabled:opacity-50 ${
+            className={`hidden sm:flex px-3 py-1.5 rounded text-xs font-medium transition-colors text-white items-center gap-1.5 disabled:opacity-50 ${
               musicMode ? 'bg-purple-600 hover:bg-purple-500' : 'bg-slate-700 hover:bg-slate-600'
             }`}
           >
@@ -447,12 +452,12 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
           <span className="hidden sm:inline-flex">
             <RtkSettingsToggle />
           </span>
-          {/* Record button — only visible to the meeting host AND when the
-              user's RealtimeKit permissions allow recording. The extra isHost
-              gate keeps the button off guest screens even if the preset
-              accidentally grants canRecord. */}
+          {/* Record button — host-only AND only on >= sm (640px). The phone
+              is a poor recording surface (battery, audio path, background tab
+              kills the meeting), so we hide it on mobile entirely. The
+              isHost + canRecord gates remain for desktop. */}
           {canRecord && isHost && (
-            <>
+            <span className="hidden sm:inline-flex gap-2">
               <button
                 className={`px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
                   isRecording || isPaused
@@ -479,7 +484,7 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
                   {isPaused ? '▶ Resume' : '⏸ Pause'}
                 </button>
               )}
-            </>
+            </span>
           )}
         </div>
         <div className="flex flex-1" />
