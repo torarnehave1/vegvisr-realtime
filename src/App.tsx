@@ -381,46 +381,47 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
       </main>
       <footer className="p-2 flex items-center w-full border-t border-slate-700">
         <div className="flex flex-1">
-          <RtkLeaveButton />
+          {/* size="sm" tells RealtimeKit's controlbar button to hide the label
+              (its internal CSS rule :host([size='sm']) .label { display: none }).
+              Same prop set on every toggle below so the row is icon-only. */}
+          <RtkLeaveButton size="sm" />
         </div>
         <div className="flex gap-2 justify-center flex-1">
-          <RtkMicToggle meeting={meeting} />
-          <RtkCameraToggle meeting={meeting} />
+          <RtkMicToggle meeting={meeting} size="sm" />
+          <RtkCameraToggle meeting={meeting} size="sm" />
           {/* Screen-share hidden on mobile — Chrome on Android can't capture
               screen via getDisplayMedia anyway. Tailwind sm: = >=640px. */}
           <span className="hidden sm:inline-flex">
-            <RtkScreenShareToggle meeting={meeting} />
+            <RtkScreenShareToggle meeting={meeting} size="sm" />
           </span>
-          <RtkChatToggle meeting={meeting} />
+          <RtkChatToggle meeting={meeting} size="sm" />
           {/* View toggle — Grid view <-> Speaker view */}
           <button
             type="button"
             onClick={() => setViewMode(viewMode === 'grid' ? 'speaker' : 'grid')}
             title={viewMode === 'grid' ? 'Switch to Speaker view' : 'Switch to Grid view'}
             aria-label={viewMode === 'grid' ? 'Switch to Speaker view' : 'Switch to Grid view'}
-            className="px-3 py-1.5 rounded text-xs font-medium transition-colors bg-slate-700 hover:bg-slate-600 text-white flex items-center gap-1.5"
+            className="p-2 rounded transition-colors bg-slate-700 hover:bg-slate-600 text-white flex items-center justify-center"
           >
             {viewMode === 'grid' ? (
               <>
-                {/* speaker-view icon: one large rect, three small below */}
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <rect x="1" y="1" width="14" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
                   <rect x="1" y="12" width="4" height="3" rx="0.5" fill="currentColor" />
                   <rect x="6" y="12" width="4" height="3" rx="0.5" fill="currentColor" />
                   <rect x="11" y="12" width="4" height="3" rx="0.5" fill="currentColor" />
                 </svg>
-                <span>Speaker</span>
+                <span className="sr-only">Switch to Speaker view</span>
               </>
             ) : (
               <>
-                {/* grid-view icon: 2x2 */}
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <rect x="1" y="1" width="6" height="6" rx="0.5" fill="currentColor" />
                   <rect x="9" y="1" width="6" height="6" rx="0.5" fill="currentColor" />
                   <rect x="1" y="9" width="6" height="6" rx="0.5" fill="currentColor" />
                   <rect x="9" y="9" width="6" height="6" rx="0.5" fill="currentColor" />
                 </svg>
-                <span>Grid</span>
+                <span className="sr-only">Switch to Grid view</span>
               </>
             )}
           </button>
@@ -435,22 +436,22 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
               ? (musicModeError ? `Music mode on (last error: ${musicModeError})` : 'Music mode is ON — disable to use voice processing')
               : 'Music mode is OFF — enable for clean system-audio capture (e.g. via BlackHole)'}
             aria-pressed={musicMode}
-            className={`hidden sm:flex px-3 py-1.5 rounded text-xs font-medium transition-colors text-white items-center gap-1.5 disabled:opacity-50 ${
+            className={`hidden sm:flex p-2 rounded transition-colors text-white items-center justify-center disabled:opacity-50 ${
               musicMode ? 'bg-purple-600 hover:bg-purple-500' : 'bg-slate-700 hover:bg-slate-600'
             }`}
           >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M6 12V4l7-1v8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               <circle cx="4.5" cy="12" r="1.5" fill="currentColor" />
               <circle cx="11.5" cy="11" r="1.5" fill="currentColor" />
             </svg>
-            <span>{musicMode ? 'Music ON' : 'Music'}</span>
+            <span className="sr-only">{musicMode ? 'Music mode is on' : 'Music mode is off'}</span>
           </button>
           {/* Settings cog hidden on mobile (Tailwind `sm:` = >=640px).
               The Settings dialog is still reachable from the participant tile
               long-press; the footer cog just duplicates that on mobile. */}
           <span className="hidden sm:inline-flex">
-            <RtkSettingsToggle />
+            <RtkSettingsToggle size="sm" />
           </span>
           {/* Record button — host-only AND only on >= sm (640px). The phone
               is a poor recording surface (battery, audio path, background tab
