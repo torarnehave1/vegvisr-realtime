@@ -23,7 +23,7 @@ import {
   RtkUiProvider,
   provideRtkDesignSystem,
 } from '@cloudflare/realtimekit-react-ui';
-import { AuthBar, EcosystemNav } from 'vegvisr-ui-kit';
+import { AuthBar, ScreenRecorder } from 'vegvisr-ui-kit';
 import { readStoredUser, type AuthUser } from './lib/auth';
 import { Login } from './components/Login';
 import { WaitingRoomPanel } from './components/WaitingRoomPanel';
@@ -1791,10 +1791,9 @@ function RealtimeMeeting() {
   if (noParams) {
     return (
       <div className="flex flex-col h-full">
-        {/* Top bar with logo */}
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-700">
-          <img src="https://favicons.vegvisr.org/favicons/1774561024334-1-1774561031809-512x512.png" alt="Vegvisr Realtime" style={{ width: '200px', height: '200px' }} />
-        </div>
+        {/* Logo banner removed — the AuthGate's slim top bar now shows a small
+            logo next to ScreenRecorder, so the lobby starts directly with the
+            impersonation banner / lobby content. */}
 
         {/* System Owner "Login as…" control + impersonation banner */}
         <ImpersonationBar />
@@ -2891,8 +2890,18 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     return (
       <AuthContext.Provider value={authUser}>
         <div className="flex flex-col h-screen bg-slate-950 text-white">
-          <div className="flex-shrink-0 border-b border-slate-800 bg-slate-900 px-4 py-2 flex items-center justify-between">
-            <EcosystemNav />
+          {/* Slim top bar: logo + screen-record on the left, user / log-out on
+              the right. EcosystemNav menu removed; logo moved here so the lobby
+              no longer needs its own banner. */}
+          <div className="flex-shrink-0 border-b border-slate-800 bg-slate-900 px-4 py-2 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-3">
+              <img
+                src="https://favicons.vegvisr.org/favicons/1774561024334-1-1774561031809-512x512.png"
+                alt="Vegvisr Realtime"
+                className="w-8 h-8 rounded"
+              />
+              <ScreenRecorder />
+            </div>
             <AuthBar
               userEmail={authUser?.email}
               badgeLabel="Vegvisr"
