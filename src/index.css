@@ -9,18 +9,17 @@ body {
 }
 
 /* ──────────────────────────────────────────────────────────────────────────────
- * Show the whole video tile content rather than cropping top/bottom.
- * RealtimeKit's participant tile renders the camera stream inside a
- * shadow-DOM <video> with object-fit: cover by default. That crops portrait
- * phone video into a landscape tile, hiding the participant's face. Switching
- * to "contain" gives Zoom/Meet-style letterboxing on the sides instead.
- * Targets every <video> inside an rtk-participant-tile across the open shadow
- * root using the ::part / >>> pattern (RealtimeKit re-uses standard
- * Stencil components so the descendant selector works for the light DOM).
+ * Show the whole video rather than cropping top/bottom.
+ * RealtimeKit's <rtk-participant-tile> renders the camera stream inside a
+ * shadow-DOM <video class="cover"> by default. A plain descendant selector
+ * can't reach inside the shadow root, so we use ::part(video) — the SDK
+ * exposes the <video> element via part="video".
+ * "cover" crops to fill (cuts top/bottom of portrait phone video in a
+ * landscape tile). "contain" letterboxes — Zoom/Meet behaviour, full face
+ * visible. !important is needed because the SDK's internal stylesheet
+ * already applies object-fit:cover via the .cover class.
  * ────────────────────────────────────────────────────────────────────────── */
-rtk-participant-tile video,
-rtk-grid video,
-rtk-mixed-grid video {
+rtk-participant-tile::part(video) {
   object-fit: contain !important;
   background: #000;
 }
