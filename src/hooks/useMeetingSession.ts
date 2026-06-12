@@ -195,23 +195,35 @@ export function useMeetingSession({ meetingId, isHost, allowDuo = false }: Optio
         pingCtxRef.current = new Ctor();
       }
       const ctx = pingCtxRef.current;
-      const now = ctx.currentTime;
-      // Two short sine notes: a 4 → e 5 (gentle, recognizable)
-      const note = (freq: number, start: number, dur: number, vol: number) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.value = freq;
-        gain.gain.setValueAtTime(0, now + start);
-        gain.gain.linearRampToValueAtTime(vol, now + start + 0.01);
-        gain.gain.linearRampToValueAtTime(0, now + start + dur);
-        osc.connect(gain).connect(ctx.destination);
-        osc.start(now + start);
-        osc.stop(now + start + dur + 0.05);
+      // Chrome ships AudioContexts in `suspended` state if the host's user
+      // gesture happened more than a moment ago — must explicitly resume
+      // before scheduling oscillator notes or they're silently dropped.
+      const schedule = () => {
+        const now = ctx.currentTime;
+        // Two short sine notes: A5 → E6 (gentle, recognizable)
+        const note = (freq: number, start: number, dur: number, vol: number) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0, now + start);
+          gain.gain.linearRampToValueAtTime(vol, now + start + 0.01);
+          gain.gain.linearRampToValueAtTime(0, now + start + dur);
+          osc.connect(gain).connect(ctx.destination);
+          osc.start(now + start);
+          osc.stop(now + start + dur + 0.05);
+        };
+        note(880, 0, 0.18, 0.2);   // A5
+        note(1318, 0.18, 0.25, 0.2); // E6
       };
-      note(880, 0, 0.18, 0.2);   // A5
-      note(1318, 0.18, 0.25, 0.2); // E6
-    } catch {
+      if (ctx.state === 'suspended') {
+        ctx.resume().then(schedule).catch((e) => console.warn('[pling] resume failed:', e));
+      } else {
+        schedule();
+      }
+      console.log('[pling] scheduled, ctx.state=', ctx.state);
+    } catch (e) {
+      console.warn('[pling] error:', e);
       /* audio failure should never break the meeting */
     }
   }, []);
@@ -229,18 +241,20 @@ export function useMeetingSession({ meetingId, isHost, allowDuo = false }: Optio
         const data = await r.json();
         if (data.success) {
           const guests = data.guests || [];
-          // Detect new arrivals vs. previously-seen list. Skip pling on the
-          // very first poll (when seenGuests is empty AND guests are present)
-          // — those guests joined before the host opened the page, so they're
-          // not "new" from a notification standpoint.
-          const isFirstPoll = seenGuests.current.size === 0 && waitingGuests.length === 0;
+          // Every distinct knock pings exactly once. A knock that's been
+          // sitting in the queue when the host's page first loads still pings
+          // — the host has to hear it to admit the guest, that's the entire
+          // point of the notification. Pings stop only for emails the host
+          // already saw and that are still waiting. Once an email leaves the
+          // list (admitted or denied), it's dropped from seenGuests so a
+          // re-knock from the same email pings again.
           let newArrivals = 0;
           for (const g of guests) {
             const key = g.guest_email;
             if (!key) continue;
             if (!seenGuests.current.has(key)) {
               seenGuests.current.add(key);
-              if (!isFirstPoll) newArrivals++;
+              newArrivals++;
             }
           }
           // Drop emails no longer in waiting list so re-knocks ping again.
@@ -248,7 +262,10 @@ export function useMeetingSession({ meetingId, isHost, allowDuo = false }: Optio
           for (const seen of seenGuests.current) {
             if (!stillWaiting.has(seen)) seenGuests.current.delete(seen);
           }
-          if (newArrivals > 0) playPling();
+          if (newArrivals > 0) {
+            console.log('[pling] new arrivals:', newArrivals, 'guests:', guests.map((g: any) => g.guest_email));
+            playPling();
+          }
           setWaitingGuests(guests);
         }
       } catch {
