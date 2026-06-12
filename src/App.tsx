@@ -2917,6 +2917,15 @@ function AuthGate({ children }: { children: React.ReactNode }) {
                 className="w-8 h-8 rounded"
               />
               <ScreenRecorder />
+              {/* Build marker — confirms you're on the latest deploy. Bump
+                  the text every time you push if you want a versioned tag. */}
+              <span
+                aria-label="Build marker X6"
+                title="Build marker X6 — visual confirmation of latest deploy"
+                className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-green-500 text-white text-[10px] font-bold tracking-wider"
+              >
+                X6
+              </span>
             </div>
             {/* Wrapped so the index.css media query can hide AuthBar's email
                 badge on small screens — its letter-spacing:0.3em + the email
