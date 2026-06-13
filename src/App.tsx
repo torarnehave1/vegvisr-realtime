@@ -31,6 +31,7 @@ import { AccessDeniedPage } from './components/AccessDeniedPage';
 import { SlugManagement } from './components/SlugManagement';
 import { SlugJoinPrompt } from './components/SlugJoinPrompt';
 import { SpeakerView } from './components/SpeakerView';
+import ParticipantsPanel from './components/ParticipantsPanel';
 import ImpersonationBar from './components/ImpersonationBar';
 import { useMeetingSession } from './hooks/useMeetingSession';
 import { config } from './lib/rtkConfig';
@@ -135,6 +136,7 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
 
   // ── Waiting room modal — UI-only state, kept local to the desktop layout ──
   const [showWaitlist, setShowWaitlist] = useState(true);
+  const [showParticipants, setShowParticipants] = useState(false);
   // Draggable modal position
   const [dragPos, setDragPos] = useState({ x: window.innerWidth - 320, y: 60 });
   const dragRef = React.useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
@@ -315,6 +317,16 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
               🖐 {waitingGuests.length}
             </button>
           )}
+          {/* Participants modal toggle — host only */}
+          {isHost && (
+            <button
+              className="ml-2 px-2 py-1 rounded text-white text-xs font-medium bg-slate-600 hover:bg-slate-500"
+              onClick={() => setShowParticipants((v) => !v)}
+              title="Participants — mute, stop video, send to waiting room"
+            >
+              👥
+            </button>
+          )}
         </div>
       </header>
 
@@ -363,6 +375,15 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
             )}
           </div>
         </div>
+      )}
+      {/* ────────────────────────────────────────────────────────────────────── */}
+
+      {/* ── Participants modal (host only) ──────────────────────────────────── */}
+      {isHost && showParticipants && meeting && (
+        <ParticipantsPanel
+          meeting={meeting}
+          onClose={() => setShowParticipants(false)}
+        />
       )}
       {/* ────────────────────────────────────────────────────────────────────── */}
 
@@ -2920,11 +2941,11 @@ function AuthGate({ children }: { children: React.ReactNode }) {
               {/* Build marker — confirms you're on the latest deploy. Bump
                   the text every time you push if you want a versioned tag. */}
               <span
-                aria-label="Build marker X7"
-                title="Build marker X7 — visual confirmation of latest deploy"
+                aria-label="Build marker X8"
+                title="Build marker X8 — visual confirmation of latest deploy"
                 className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-green-500 text-white text-[10px] font-bold tracking-wider"
               >
-                X7
+                X8
               </span>
             </div>
             {/* Wrapped so the index.css media query can hide AuthBar's email
