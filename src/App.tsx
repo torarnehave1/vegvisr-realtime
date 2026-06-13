@@ -134,31 +134,8 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
     updateStates,
   } = useMeetingSession({ meetingId, isHost, allowDuo: false });
 
-  // ── Waiting room modal — UI-only state, kept local to the desktop layout ──
-  const [showWaitlist, setShowWaitlist] = useState(true);
+  // Drag state for the participants panel lives inside the panel itself now.
   const [showParticipants, setShowParticipants] = useState(false);
-  // Draggable modal position
-  const [dragPos, setDragPos] = useState({ x: window.innerWidth - 320, y: 60 });
-  const dragRef = React.useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
-
-  const onDragStart = (e: React.MouseEvent) => {
-    dragRef.current = { startX: e.clientX, startY: e.clientY, origX: dragPos.x, origY: dragPos.y };
-    const onMove = (ev: MouseEvent) => {
-      if (!dragRef.current) return;
-      setDragPos({
-        x: dragRef.current.origX + ev.clientX - dragRef.current.startX,
-        y: dragRef.current.origY + ev.clientY - dragRef.current.startY,
-      });
-    };
-    const onUp = () => {
-      dragRef.current = null;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  };
-  // ─────────────────────────────────────────────────────────────────────────
 
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
@@ -307,82 +284,30 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
               {selfName || 'You'} ✏️
             </button>
           )}
-          {/* Waiting room toggle button — always visible to host */}
-          {isHost && (
-            <button
-              className={`ml-2 px-2 py-1 rounded text-white text-xs font-medium ${waitingGuests.length > 0 ? 'bg-amber-600 hover:bg-amber-500 animate-pulse' : 'bg-slate-600 hover:bg-slate-500'}`}
-              onClick={() => setShowWaitlist((v) => !v)}
-              title="Toggle waiting room"
-            >
-              🖐 {waitingGuests.length}
-            </button>
-          )}
-          {/* Participants modal toggle — visible to everyone in the meeting.
-              Inside the panel, host-only actions (Mute / Cam / 🖐) are hidden
-              for non-hosts so they get a read-only roster. */}
+          {/* Single Participants button — opens combined Waiting Room +
+              In-Meeting roster. Amber pulse when a host has guests knocking. */}
           <button
-            className="ml-2 px-2 py-1 rounded text-white text-xs font-medium bg-slate-600 hover:bg-slate-500"
+            className={`ml-2 px-2 py-1 rounded text-white text-xs font-medium ${
+              isHost && waitingGuests.length > 0
+                ? 'bg-amber-600 hover:bg-amber-500 animate-pulse'
+                : 'bg-slate-600 hover:bg-slate-500'
+            }`}
             onClick={() => setShowParticipants((v) => !v)}
-            title={isHost ? 'Participants — mute, stop video, send to waiting room' : 'Participants'}
+            title={isHost ? 'Participants — admit guests, mute, stop video, send to waiting room' : 'Participants'}
           >
-            👥
+            👥{isHost && waitingGuests.length > 0 ? ` 🖐${waitingGuests.length}` : ''}
           </button>
         </div>
       </header>
 
-      {/* ── Draggable waiting room modal (host only) ──────────────────────── */}
-      {isHost && showWaitlist && (
-        <div
-          style={{ position: 'fixed', left: dragPos.x, top: dragPos.y, zIndex: 9999, width: 300 }}
-          className="bg-slate-900 border border-slate-500 rounded-xl shadow-2xl select-none"
-        >
-          {/* Drag handle */}
-          <div
-            className="flex items-center justify-between px-3 py-2 bg-slate-700 rounded-t-xl cursor-grab active:cursor-grabbing"
-            onMouseDown={onDragStart}
-          >
-            <span className="text-sm font-semibold text-white">🖐 Waiting Room ({waitingGuests.length})</span>
-            <button className="text-slate-400 hover:text-white text-lg leading-none" onClick={() => setShowWaitlist(false)}>✕</button>
-          </div>
-
-          {/* Guest list */}
-          <div className="p-2 flex flex-col gap-1 max-h-72 overflow-y-auto">
-            {waitingGuests.length === 0 ? (
-              <p className="text-slate-400 text-xs text-center py-4">No one waiting</p>
-            ) : (
-              <>
-                {waitingGuests.map((g: any) => (
-                  <div key={g.guest_email} className="flex items-center gap-2 px-2 py-2 rounded hover:bg-slate-800">
-                    <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center text-xs text-white font-bold flex-shrink-0">
-                      {(g.guest_name || g.guest_email || '?')[0].toUpperCase()}
-                    </div>
-                    <span className="flex-1 text-sm text-slate-200 truncate">{g.guest_name || g.guest_email}</span>
-                    <button
-                      className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-white text-xs font-medium"
-                      onClick={() => admitGuest(g.guest_email)}
-                    >✓ Admit</button>
-                    <button
-                      className="px-2 py-1 bg-red-700 hover:bg-red-600 rounded text-white text-xs font-medium"
-                      onClick={() => denyGuest(g.guest_email)}
-                    >✕</button>
-                  </div>
-                ))}
-                <button
-                  className="mt-1 w-full py-1.5 bg-emerald-700 hover:bg-emerald-600 rounded text-white text-xs font-medium"
-                  onClick={() => waitingGuests.forEach((g) => admitGuest(g.guest_email))}
-                >Admit All</button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-      {/* ────────────────────────────────────────────────────────────────────── */}
-
-      {/* ── Participants modal — visible to all; actions gated to host inside ─ */}
+      {/* ── Combined Participants + Waiting Room panel (single 👥 button) ──── */}
       {showParticipants && meeting && (
         <ParticipantsPanel
           meeting={meeting}
           isHost={isHost}
+          waitingGuests={isHost ? waitingGuests : []}
+          admitGuest={admitGuest}
+          denyGuest={denyGuest}
           onClose={() => setShowParticipants(false)}
         />
       )}
@@ -2942,11 +2867,11 @@ function AuthGate({ children }: { children: React.ReactNode }) {
               {/* Build marker — confirms you're on the latest deploy. Bump
                   the text every time you push if you want a versioned tag. */}
               <span
-                aria-label="Build marker X9"
-                title="Build marker X9 — visual confirmation of latest deploy"
+                aria-label="Build marker XA"
+                title="Build marker XA — visual confirmation of latest deploy"
                 className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-green-500 text-white text-[10px] font-bold tracking-wider"
               >
-                X9
+                XA
               </span>
             </div>
             {/* Wrapped so the index.css media query can hide AuthBar's email

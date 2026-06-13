@@ -1,11 +1,21 @@
 import React, { useEffect, useState, useRef } from 'react';
 
+interface WaitingGuest {
+  guest_email: string;
+  guest_name?: string | null;
+}
+
 interface Props {
   meeting: any;
-  /** When true, render Mute / Cam / 🖐 actions per row. When false, list is read-only. */
+  /** Viewer's host status. Controls visibility of host-only sections + per-row actions. */
   isHost: boolean;
+  /** Knocking guests (host only). Empty array for non-hosts. */
+  waitingGuests: WaitingGuest[];
+  /** Host actions for the waiting-room section. */
+  admitGuest: (email: string) => void;
+  denyGuest: (email: string) => void;
   onClose: () => void;
-  /** Initial fixed position (top-right by default, below the waiting-room panel). */
+  /** Initial fixed position (top-right by default). */
   initialPos?: { x: number; y: number };
 }
 
@@ -18,23 +28,34 @@ interface Row {
 }
 
 /**
- * Host-only participants modal: lists joined participants with per-row actions
- * (mute audio, stop video, kick = send back to waiting room).
+ * Combined Waiting Room + In-Meeting roster modal.
  *
- * Subscribes to participant join / leave / media-state events so the list and
- * the per-row icons stay live without polling.
+ * Top section ("Waiting Room") is host-only and only renders when there are
+ * guests knocking — Admit / Deny per row, plus Admit All.
  *
- * "Send to waiting room" is implemented as `meeting.participants.kick(id)` —
- * with the waiting-room toggle enabled, a kicked participant re-knocks on
- * rejoin. If the waiting room is disabled it's a hard eject, which matches
- * the same SDK call other RealtimeKit hosts use.
+ * Bottom section ("In Meeting") is visible to every participant. Each row
+ * shows name, host badge, live audio/video icons, short UUID. The host-only
+ * action buttons (Mute / Cam / 🖐) render only when the viewer is a host.
+ *
+ * Subscribes to participants.joined events so the roster + media icons stay
+ * live without polling. Waiting-room data comes in as a prop (the host
+ * polling lives in useMeetingSession).
+ *
+ * "Send to waiting room" = `meeting.participants.kick(id)`. With the waiting-
+ * room toggle on, the guest re-knocks on rejoin; with it off it's an eject.
  */
-export default function ParticipantsPanel({ meeting, isHost, onClose, initialPos }: Props) {
+export default function ParticipantsPanel({
+  meeting,
+  isHost,
+  waitingGuests,
+  admitGuest,
+  denyGuest,
+  onClose,
+  initialPos,
+}: Props) {
   const [rows, setRows] = useState<Row[]>([]);
-  // Default position: same right edge as the waiting-room popup, but below
-  // it (y=300) so the two panels don't overlap when both are open.
   const [pos, setPos] = useState(
-    initialPos ?? { x: typeof window !== 'undefined' ? window.innerWidth - 360 : 100, y: 300 },
+    initialPos ?? { x: typeof window !== 'undefined' ? window.innerWidth - 360 : 100, y: 80 },
   );
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -60,7 +81,6 @@ export default function ParticipantsPanel({ meeting, isHost, onClose, initialPos
     refresh();
     const joined = meeting?.participants?.joined;
     if (!joined) return;
-    // Updates that change the list or per-row icons.
     const onChange = () => refresh();
     joined.on?.('participantJoined', onChange);
     joined.on?.('participantLeft', onChange);
@@ -125,6 +145,8 @@ export default function ParticipantsPanel({ meeting, isHost, onClose, initialPos
     }
   };
 
+  const showWaitingSection = isHost && waitingGuests.length > 0;
+
   return (
     <div
       style={{ position: 'fixed', left: pos.x, top: pos.y, zIndex: 9998, width: 340 }}
@@ -134,7 +156,10 @@ export default function ParticipantsPanel({ meeting, isHost, onClose, initialPos
         className="flex items-center justify-between px-3 py-2 bg-slate-700 rounded-t-xl cursor-grab active:cursor-grabbing"
         onMouseDown={onDragStart}
       >
-        <span className="text-sm font-semibold text-white">👥 Participants ({rows.length})</span>
+        <span className="text-sm font-semibold text-white">
+          👥 Participants ({rows.length}
+          {showWaitingSection ? ` · 🖐 ${waitingGuests.length}` : ''})
+        </span>
         <button
           className="text-slate-400 hover:text-white text-lg leading-none"
           onClick={onClose}
@@ -142,65 +167,104 @@ export default function ParticipantsPanel({ meeting, isHost, onClose, initialPos
         >✕</button>
       </div>
 
-      <div className="p-2 flex flex-col gap-1 max-h-80 overflow-y-auto">
-        {rows.length === 0 ? (
-          <p className="text-slate-400 text-xs text-center py-4">No participants yet</p>
-        ) : (
-          rows.map((r) => {
-            const busy = busyId === r.id;
-            const rowIsHost = /host/i.test(r.presetName);
-            return (
-              <div key={r.id} className="flex items-center gap-2 px-2 py-2 rounded hover:bg-slate-800">
-                <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center text-xs text-white font-bold flex-shrink-0">
-                  {(r.name || '?')[0].toUpperCase()}
+      <div className="max-h-[60vh] overflow-y-auto">
+        {showWaitingSection && (
+          <div className="p-2 border-b border-slate-700">
+            <div className="text-[10px] uppercase tracking-wider text-amber-300 px-1 pb-1 flex items-center justify-between">
+              <span>🖐 Waiting Room ({waitingGuests.length})</span>
+              {waitingGuests.length > 1 && (
+                <button
+                  className="text-[10px] text-emerald-300 hover:text-emerald-200 normal-case tracking-normal"
+                  onClick={() => waitingGuests.forEach((g) => admitGuest(g.guest_email))}
+                >Admit all</button>
+              )}
+            </div>
+            <div className="flex flex-col gap-1">
+              {waitingGuests.map((g) => (
+                <div key={g.guest_email} className="flex items-center gap-2 px-2 py-2 rounded hover:bg-slate-800">
+                  <div className="w-8 h-8 rounded-full bg-amber-700 flex items-center justify-center text-xs text-white font-bold flex-shrink-0">
+                    {(g.guest_name || g.guest_email || '?')[0].toUpperCase()}
+                  </div>
+                  <span className="flex-1 text-sm text-slate-200 truncate">{g.guest_name || g.guest_email}</span>
+                  <button
+                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-white text-xs font-medium"
+                    onClick={() => admitGuest(g.guest_email)}
+                  >✓ Admit</button>
+                  <button
+                    className="px-2 py-1 bg-red-700 hover:bg-red-600 rounded text-white text-xs font-medium"
+                    onClick={() => denyGuest(g.guest_email)}
+                  >✕</button>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm text-slate-200 truncate">{r.name}</span>
-                    {rowIsHost && (
-                      <span className="text-[9px] uppercase tracking-wider text-emerald-300 bg-emerald-900/50 px-1 rounded">
-                        host
-                      </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="p-2">
+          <div className="text-[10px] uppercase tracking-wider text-slate-400 px-1 pb-1">
+            In meeting ({rows.length})
+          </div>
+          <div className="flex flex-col gap-1">
+            {rows.length === 0 ? (
+              <p className="text-slate-400 text-xs text-center py-4">No participants yet</p>
+            ) : (
+              rows.map((r) => {
+                const busy = busyId === r.id;
+                const rowIsHost = /host/i.test(r.presetName);
+                return (
+                  <div key={r.id} className="flex items-center gap-2 px-2 py-2 rounded hover:bg-slate-800">
+                    <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center text-xs text-white font-bold flex-shrink-0">
+                      {(r.name || '?')[0].toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm text-slate-200 truncate">{r.name}</span>
+                        {rowIsHost && (
+                          <span className="text-[9px] uppercase tracking-wider text-emerald-300 bg-emerald-900/50 px-1 rounded">
+                            host
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span
+                          className={`text-[10px] ${r.audioEnabled ? 'text-emerald-400' : 'text-slate-500'}`}
+                          title={r.audioEnabled ? 'Audio on' : 'Audio off'}
+                        >{r.audioEnabled ? '🔊' : '🔇'}</span>
+                        <span
+                          className={`text-[10px] ${r.videoEnabled ? 'text-emerald-400' : 'text-slate-500'}`}
+                          title={r.videoEnabled ? 'Video on' : 'Video off'}
+                        >{r.videoEnabled ? '📹' : '📵'}</span>
+                        <span className="text-[9px] text-slate-500 truncate">{r.id.slice(0, 8)}</span>
+                      </div>
+                    </div>
+                    {isHost && (
+                      <>
+                        <button
+                          className="px-1.5 py-1 bg-slate-700 hover:bg-slate-600 rounded text-white text-[11px] disabled:opacity-40"
+                          disabled={busy || !r.audioEnabled || rowIsHost}
+                          onClick={() => muteAudio(r.id)}
+                          title={rowIsHost ? "Can't mute another host" : 'Mute audio'}
+                        >Mute</button>
+                        <button
+                          className="px-1.5 py-1 bg-slate-700 hover:bg-slate-600 rounded text-white text-[11px] disabled:opacity-40"
+                          disabled={busy || !r.videoEnabled || rowIsHost}
+                          onClick={() => stopVideo(r.id)}
+                          title={rowIsHost ? "Can't stop another host's video" : 'Stop video'}
+                        >Cam</button>
+                        <button
+                          className="px-1.5 py-1 bg-red-700 hover:bg-red-600 rounded text-white text-[11px] disabled:opacity-40"
+                          disabled={busy || rowIsHost}
+                          onClick={() => kick(r.id, r.name)}
+                          title={rowIsHost ? "Can't kick a host" : 'Send to waiting room'}
+                        >🖐</button>
+                      </>
                     )}
                   </div>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    <span
-                      className={`text-[10px] ${r.audioEnabled ? 'text-emerald-400' : 'text-slate-500'}`}
-                      title={r.audioEnabled ? 'Audio on' : 'Audio off'}
-                    >{r.audioEnabled ? '🔊' : '🔇'}</span>
-                    <span
-                      className={`text-[10px] ${r.videoEnabled ? 'text-emerald-400' : 'text-slate-500'}`}
-                      title={r.videoEnabled ? 'Video on' : 'Video off'}
-                    >{r.videoEnabled ? '📹' : '📵'}</span>
-                    <span className="text-[9px] text-slate-500 truncate">{r.id.slice(0, 8)}</span>
-                  </div>
-                </div>
-                {isHost && (
-                  <>
-                    <button
-                      className="px-1.5 py-1 bg-slate-700 hover:bg-slate-600 rounded text-white text-[11px] disabled:opacity-40"
-                      disabled={busy || !r.audioEnabled || rowIsHost}
-                      onClick={() => muteAudio(r.id)}
-                      title={rowIsHost ? "Can't mute another host" : 'Mute audio'}
-                    >Mute</button>
-                    <button
-                      className="px-1.5 py-1 bg-slate-700 hover:bg-slate-600 rounded text-white text-[11px] disabled:opacity-40"
-                      disabled={busy || !r.videoEnabled || rowIsHost}
-                      onClick={() => stopVideo(r.id)}
-                      title={rowIsHost ? "Can't stop another host's video" : 'Stop video'}
-                    >Cam</button>
-                    <button
-                      className="px-1.5 py-1 bg-red-700 hover:bg-red-600 rounded text-white text-[11px] disabled:opacity-40"
-                      disabled={busy || rowIsHost}
-                      onClick={() => kick(r.id, r.name)}
-                      title={rowIsHost ? "Can't kick a host" : 'Send to waiting room'}
-                    >🖐</button>
-                  </>
-                )}
-              </div>
-            );
-          })
-        )}
+                );
+              })
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
