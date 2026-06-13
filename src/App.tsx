@@ -317,16 +317,16 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
               🖐 {waitingGuests.length}
             </button>
           )}
-          {/* Participants modal toggle — host only */}
-          {isHost && (
-            <button
-              className="ml-2 px-2 py-1 rounded text-white text-xs font-medium bg-slate-600 hover:bg-slate-500"
-              onClick={() => setShowParticipants((v) => !v)}
-              title="Participants — mute, stop video, send to waiting room"
-            >
-              👥
-            </button>
-          )}
+          {/* Participants modal toggle — visible to everyone in the meeting.
+              Inside the panel, host-only actions (Mute / Cam / 🖐) are hidden
+              for non-hosts so they get a read-only roster. */}
+          <button
+            className="ml-2 px-2 py-1 rounded text-white text-xs font-medium bg-slate-600 hover:bg-slate-500"
+            onClick={() => setShowParticipants((v) => !v)}
+            title={isHost ? 'Participants — mute, stop video, send to waiting room' : 'Participants'}
+          >
+            👥
+          </button>
         </div>
       </header>
 
@@ -378,10 +378,11 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
       )}
       {/* ────────────────────────────────────────────────────────────────────── */}
 
-      {/* ── Participants modal (host only) ──────────────────────────────────── */}
-      {isHost && showParticipants && meeting && (
+      {/* ── Participants modal — visible to all; actions gated to host inside ─ */}
+      {showParticipants && meeting && (
         <ParticipantsPanel
           meeting={meeting}
+          isHost={isHost}
           onClose={() => setShowParticipants(false)}
         />
       )}
@@ -2941,11 +2942,11 @@ function AuthGate({ children }: { children: React.ReactNode }) {
               {/* Build marker — confirms you're on the latest deploy. Bump
                   the text every time you push if you want a versioned tag. */}
               <span
-                aria-label="Build marker X8"
-                title="Build marker X8 — visual confirmation of latest deploy"
+                aria-label="Build marker X9"
+                title="Build marker X9 — visual confirmation of latest deploy"
                 className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-green-500 text-white text-[10px] font-bold tracking-wider"
               >
-                X8
+                X9
               </span>
             </div>
             {/* Wrapped so the index.css media query can hide AuthBar's email
