@@ -4,6 +4,7 @@ import {
   useRealtimeKitSelector,
 } from '@cloudflare/realtimekit-react';
 import { readStoredUser } from '../lib/auth';
+import { useTelemetryCapture } from './useTelemetryCapture';
 
 export type ViewMode = 'grid' | 'speaker' | 'duo';
 
@@ -91,6 +92,9 @@ export function useMeetingSession({ meetingId, isHost, allowDuo = false }: Optio
       meeting.participants.off?.('activeSpeaker', handler);
     };
   }, [meeting]);
+
+  // ── Participant telemetry capture (host only, 1A) ──────────────────────────
+  useTelemetryCapture(meeting, meetingId, isHost);
 
   // ── Meeting elapsed timer ──────────────────────────────────────────────────
   const [meetingSeconds, setMeetingSeconds] = useState(0);
