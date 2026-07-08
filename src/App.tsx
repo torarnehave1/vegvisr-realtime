@@ -1202,8 +1202,9 @@ function RealtimeMeeting() {
     if (rec.source === 'realtimekit' && rec.download_url) {
       window.open(rec.download_url, '_blank');
     } else {
+      const asUserQ = activeAccount && activeAccount !== stored.email ? `&asUser=${encodeURIComponent(activeAccount)}` : '';
       window.open(
-        `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(rec.key)}&token=${encodeURIComponent(stored.emailVerificationToken)}`,
+        `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(rec.key)}&token=${encodeURIComponent(stored.emailVerificationToken)}${asUserQ}`,
         '_blank'
       );
     }
@@ -1228,6 +1229,8 @@ function RealtimeMeeting() {
       } else {
         params.set('key', key);
       }
+      // r2-own recordings resolve to the impersonated user's bucket server-side.
+      if (activeAccount && activeAccount !== stored.email) params.set('asUser', activeAccount);
       const downloadUrl = `https://api.vegvisr.org/realtime/recordings/download?${params.toString()}`;
       const dlResp = await fetch(downloadUrl);
       if (!dlResp.ok) throw new Error(`Download failed: ${dlResp.status} ${dlResp.statusText}`);
@@ -1363,6 +1366,8 @@ function RealtimeMeeting() {
       } else {
         params.set('key', key);
       }
+      // r2-own recordings resolve to the impersonated user's bucket server-side.
+      if (activeAccount && activeAccount !== stored.email) params.set('asUser', activeAccount);
       const downloadUrl = `https://api.vegvisr.org/realtime/recordings/download?${params.toString()}`;
       const dlResp = await fetch(downloadUrl);
       if (!dlResp.ok) throw new Error(`Download failed: ${dlResp.status} ${dlResp.statusText}`);
@@ -1611,7 +1616,8 @@ function RealtimeMeeting() {
     // Prefer the playUrl from the listing (presigned for r2-own, public for shared bucket).
     if (rec.playUrl) return rec.playUrl;
     // Legacy proxy fallback (still works, but loads bytes through the worker).
-    return `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(rec.key)}&token=${encodeURIComponent(stored.emailVerificationToken)}`;
+    const asUserQ = activeAccount && activeAccount !== stored.email ? `&asUser=${encodeURIComponent(activeAccount)}` : '';
+    return `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(rec.key)}&token=${encodeURIComponent(stored.emailVerificationToken)}${asUserQ}`;
   };
 
   const copyTranscript = (key: string) => {
