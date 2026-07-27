@@ -948,12 +948,48 @@ function RealtimeMeeting() {
     finally { setLoadingRecordings(false); }
   };
 
+  // Founders (Admin role, own R2 bucket configured) upload via a single streamed PUT to their
+  // OWN bucket — no chunking, no shared-bucket mixing. Superadmin keeps the multipart flow below
+  // against the shared MEETING_RECORDINGS bucket.
+  const uploadRecordingDirect = async (file: File, stored: ReturnType<typeof readStoredUser>) => {
+    setUploadingRecording(true);
+    setUploadingRecordingProgress(null);
+    try {
+      const params = new URLSearchParams({
+        filename: file.name,
+        contentType: file.type || 'video/mp4',
+        size: String(file.size),
+      });
+      const r = await fetch(`https://api.vegvisr.org/realtime/recordings/upload/direct?${params.toString()}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': file.type || 'video/mp4',
+          'X-API-Token': stored?.emailVerificationToken || '',
+        },
+        body: file,
+      });
+      const data = await r.json();
+      if (!r.ok || !data.success) throw new Error(data.error || `Upload failed with status ${r.status}`);
+      await fetchRecordings();
+      alert(`Uploaded ${data.name || file.name} to your R2 bucket.`);
+    } catch (err: any) {
+      alert('Upload error: ' + err.message);
+    } finally {
+      setUploadingRecording(false);
+      setUploadingRecordingProgress(null);
+      if (recordingUploadInputRef.current) recordingUploadInputRef.current.value = '';
+    }
+  };
+
   const uploadRecordingToR2 = async (file: File) => {
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) return;
-    if (stored.role !== 'Superadmin') {
-      alert('Only Superadmin users can upload videos to R2.');
+    if (!canRoleManageMeetings(stored.role)) {
+      alert('Only Admin or Superadmin users can upload videos to R2.');
       return;
+    }
+    if (stored.role !== 'Superadmin') {
+      return uploadRecordingDirect(file, stored);
     }
     setUploadingRecording(true);
     setUploadingRecordingProgress(0);
@@ -2277,7 +2313,7 @@ function RealtimeMeeting() {
                 <p className="text-slate-400 text-sm">Play, transcribe and manage your meeting recordings.</p>
               </div>
               <div className="flex gap-2">
-                {readStoredUser()?.role === 'Superadmin' && (
+                {canRoleManageMeetings(readStoredUser()?.role) && (
                   <>
                     <input
                       ref={recordingUploadInputRef}
