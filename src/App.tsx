@@ -948,31 +948,86 @@ function RealtimeMeeting() {
     finally { setLoadingRecordings(false); }
   };
 
-  // Founders (Admin role, own R2 bucket configured) upload via a single streamed PUT to their
-  // OWN bucket — no chunking, no shared-bucket mixing. Superadmin keeps the multipart flow below
-  // against the shared MEETING_RECORDINGS bucket.
+  // Founders (Admin role, own R2 bucket configured) upload via chunked multipart into their
+  // OWN bucket — same 8MB-chunk shape as the Superadmin flow below (a single big PUT hits
+  // Cloudflare's per-request body size limit and fails client-side as a bare "Failed to
+  // fetch"), just routed to /upload/direct/* so it lands in the founder's own bucket instead
+  // of the shared one.
   const uploadRecordingDirect = async (file: File, stored: ReturnType<typeof readStoredUser>) => {
     setUploadingRecording(true);
-    setUploadingRecordingProgress(null);
+    setUploadingRecordingProgress(0);
+    const token = stored?.emailVerificationToken || '';
+    let uploadSession: { uploadId: string; key: string; name: string; size: number; contentType: string } | null = null;
     try {
-      const params = new URLSearchParams({
-        filename: file.name,
-        contentType: file.type || 'video/mp4',
-        size: String(file.size),
-      });
-      const r = await fetch(`https://api.vegvisr.org/realtime/recordings/upload/direct?${params.toString()}`, {
+      const initResponse = await fetch('https://api.vegvisr.org/realtime/recordings/upload/direct/init', {
         method: 'POST',
-        headers: {
-          'Content-Type': file.type || 'video/mp4',
-          'X-API-Token': stored?.emailVerificationToken || '',
-        },
-        body: file,
+        headers: { 'Content-Type': 'application/json', 'X-API-Token': token },
+        body: JSON.stringify({
+          filename: file.name,
+          contentType: file.type || 'video/mp4',
+          size: file.size,
+        }),
       });
-      const data = await r.json();
-      if (!r.ok || !data.success) throw new Error(data.error || `Upload failed with status ${r.status}`);
+      const initData = await initResponse.json();
+      if (!initResponse.ok || !initData.success) {
+        throw new Error(initData.error || `Upload init failed with status ${initResponse.status}`);
+      }
+      uploadSession = initData;
+      const currentUpload = initData as { uploadId: string; key: string; name: string; size: number; contentType: string };
+
+      const chunkSize = 8 * 1024 * 1024;
+      const parts: Array<{ partNumber: number; etag: string }> = [];
+      const totalParts = Math.max(1, Math.ceil(file.size / chunkSize));
+
+      for (let partNumber = 1; partNumber <= totalParts; partNumber += 1) {
+        const start = (partNumber - 1) * chunkSize;
+        const end = Math.min(file.size, start + chunkSize);
+        const chunk = file.slice(start, end);
+        const partResponse = await fetch(
+          `https://api.vegvisr.org/realtime/recordings/upload/direct/part?key=${encodeURIComponent(currentUpload.key)}&uploadId=${encodeURIComponent(currentUpload.uploadId)}&partNumber=${partNumber}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream', 'X-API-Token': token },
+            body: chunk,
+          }
+        );
+        const partData = await partResponse.json();
+        if (!partResponse.ok || !partData.success || !partData.part?.etag) {
+          throw new Error(partData.error || `Upload part ${partNumber} failed with status ${partResponse.status}`);
+        }
+        parts.push({ partNumber: Number(partData.part.partNumber), etag: String(partData.part.etag) });
+        setUploadingRecordingProgress(Math.round((partNumber / totalParts) * 100));
+      }
+
+      const completeResponse = await fetch('https://api.vegvisr.org/realtime/recordings/upload/direct/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Token': token },
+        body: JSON.stringify({
+          key: currentUpload.key,
+          uploadId: currentUpload.uploadId,
+          parts,
+          name: currentUpload.name,
+          size: currentUpload.size,
+          contentType: currentUpload.contentType,
+        }),
+      });
+      const completeData = await completeResponse.json();
+      if (!completeResponse.ok || !completeData.success) {
+        throw new Error(completeData.error || `Upload complete failed with status ${completeResponse.status}`);
+      }
+
       await fetchRecordings();
-      alert(`Uploaded ${data.name || file.name} to your R2 bucket.`);
+      alert(`Uploaded ${completeData.name || file.name} to your R2 bucket.`);
     } catch (err: any) {
+      if (uploadSession?.uploadId && uploadSession?.key) {
+        try {
+          await fetch('https://api.vegvisr.org/realtime/recordings/upload/direct/abort', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-API-Token': token },
+            body: JSON.stringify({ key: uploadSession.key, uploadId: uploadSession.uploadId }),
+          });
+        } catch { /* ignore abort cleanup errors */ }
+      }
       alert('Upload error: ' + err.message);
     } finally {
       setUploadingRecording(false);

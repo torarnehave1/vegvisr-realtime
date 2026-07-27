@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cloudflare Stream embed test</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 32px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0b0f14; color: #e6edf3;
+    }
+    .wrap { max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; margin: 0 0 4px; }
+    .sub { color: #8b98a5; margin: 0 0 24px; font-size: .95rem; }
+    .row { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+    input {
+      flex: 1; min-width: 280px; padding: 10px 12px; border-radius: 8px;
+      border: 1px solid #30363d; background: #161b22; color: #e6edf3; font-family: ui-monospace, monospace; font-size: .85rem;
+    }
+    button {
+      padding: 10px 16px; border-radius: 8px; border: 0; cursor: pointer;
+      background: #2f81f7; color: #fff; font-weight: 600; font-size: .9rem;
+    }
+    button:hover { background: #4c8ffb; }
+    .player {
+      position: relative; width: 100%; padding-bottom: 56.25%;
+      background: #000; border-radius: 12px; overflow: hidden;
+      border: 1px solid #30363d;
+    }
+    .player iframe {
+      position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+    }
+    .meta { margin-top: 20px; font-size: .85rem; color: #8b98a5; line-height: 1.7; }
+    code { background: #161b22; padding: 2px 6px; border-radius: 4px; color: #79c0ff; font-family: ui-monospace, monospace; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: .7rem; font-weight: 700; letter-spacing: .5px; }
+    .badge.live { background: #ef4444; color: #fff; }
+    .note { margin-top: 16px; padding: 12px 14px; background: #161b22; border-left: 3px solid #f59e0b; border-radius: 6px; font-size: .85rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Cloudflare Stream embed test <span class="badge live">LIVE INPUT</span></h1>
+    <p class="sub">Live Input <code>little-bonus-7f2a</code> &middot; account <code>customer-7tiaylt74yxtwkg8</code></p>
+
+    <div class="row">
+      <input id="vid" value="5515e1b11b5535606b50c2efce9ec2f2" spellcheck="false" />
+      <button onclick="load()">Load embed</button>
+    </div>
+
+    <div class="player">
+      <iframe id="frame"
+        src="https://customer-7tiaylt74yxtwkg8.cloudflarestream.com/5515e1b11b5535606b50c2efce9ec2f2/iframe"
+        allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture;"
+        allowfullscreen></iframe>
+    </div>
+
+    <div class="note">
+      The Live Input is currently <strong>Disconnected</strong> (nothing pushing to it). The player below will show
+      Cloudflare's <em>"Stream has not started yet"</em> poster — that poster is proof the embed reaches Cloudflare and
+      renders the player. Start pushing from Meld (RTMPS) and the same URL plays the live video with no code change.
+    </div>
+
+    <div class="meta">
+      <strong>Embed URL pattern:</strong><br />
+      <code>https://customer-7tiaylt74yxtwkg8.cloudflarestream.com/&lt;videoId&gt;/iframe</code><br /><br />
+      &bull; <strong>Live:</strong> videoId = Live Input ID <code>5515e1b11b5535606b50c2efce9ec2f2</code><br />
+      &bull; <strong>Recording (VOD):</strong> videoId = that recording's own 32-hex UID<br /><br />
+      This same iframe drops into a vegvisr <code>html-node</code>, an Agent-Builder app, or any page.
+    </div>
+  </div>
+
+  <script>
+    function load() {
+      var id = document.getElementById('vid').value.trim();
+      document.getElementById('frame').src =
+        'https://customer-7tiaylt74yxtwkg8.cloudflarestream.com/' + id + '/iframe';
+    }
+  </script>
+</body>
+</html>
