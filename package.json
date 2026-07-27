@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@breezystack/lamejs": "^1.2.7",
     "@cloudflare/realtimekit": "^1.2.0",
     "@cloudflare/realtimekit-react": "^1.2.0",
     "@cloudflare/realtimekit-react-ui": "^1.0.6",

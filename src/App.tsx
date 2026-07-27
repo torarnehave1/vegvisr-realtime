@@ -24,6 +24,7 @@ import {
   provideRtkDesignSystem,
 } from '@cloudflare/realtimekit-react-ui';
 import { AuthBar, ScreenRecorder } from 'vegvisr-ui-kit';
+import { Mp3Encoder } from '@breezystack/lamejs';
 import { readStoredUser, type AuthUser } from './lib/auth';
 import { Login } from './components/Login';
 import { WaitingRoomPanel } from './components/WaitingRoomPanel';
@@ -555,6 +556,7 @@ function RealtimeMeeting() {
   const [transcribeProgress, setTranscribeProgress] = useState<{ current: number; total: number } | null>(null);
   const [extractingAudioKey, setExtractingAudioKey] = useState<string | null>(null);
   const [audioExtractError, setAudioExtractError] = useState<Record<string, string>>({});
+  const [audioFormatMenuKey, setAudioFormatMenuKey] = useState<string | null>(null);
   const [lobbyTab, setLobbyTab] = useState<'meetings' | 'recordings' | 'slugs'>('meetings');
   const [playingKey, setPlayingKey] = useState<string | null>(null);
   const [copiedTranscript, setCopiedTranscript] = useState<string | null>(null);
@@ -1306,7 +1308,7 @@ function RealtimeMeeting() {
    * Pipeline: fetch video -> decodeAudioData -> WAV blob (44.1kHz stereo) -> save.
    * Runs entirely in the browser. No backend changes required.
    */
-  const downloadRecordingAudio = async (rec: any) => {
+  const downloadRecordingAudio = async (rec: any, format: 'wav' | 'mp3' = 'wav') => {
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) return;
     const key = rec.key;
@@ -1336,17 +1338,20 @@ function RealtimeMeeting() {
         try { audioCtx.close(); } catch { /* ignore */ }
       }
 
-      // 3. Encode to a podcast-quality WAV (44.1 kHz, stereo)
-      const wavBlob = audioBufferToWavBlob(audioBuffer, { sampleRate: 44100, channels: 2 });
+      // 3. Encode to podcast-quality audio (44.1 kHz, stereo) — WAV (uncompressed, largest,
+      // highest fidelity) or MP3 (~5-6x smaller, indistinguishable for spoken word at 192kbps).
+      const blob = format === 'mp3'
+        ? audioBufferToMp3Blob(audioBuffer, { sampleRate: 44100, channels: 2, kbps: 192 })
+        : audioBufferToWavBlob(audioBuffer, { sampleRate: 44100, channels: 2 });
 
       // 4. Trigger a browser file save
       const baseName = (rec.title || rec.fileName || rec.key || 'recording')
         .replace(/\.[^.]+$/, '')
         .replace(/[\\/:*?"<>|]+/g, '-');
-      const url = URL.createObjectURL(wavBlob);
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${baseName}.wav`;
+      a.download = `${baseName}.${format}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -1434,6 +1439,63 @@ function RealtimeMeeting() {
       }
     }
     return new Blob([buffer], { type: 'audio/wav' });
+  };
+
+  /**
+   * Encode an AudioBuffer to an MP3 Blob via lamejs — the WAV export above is uncompressed
+   * (44.1kHz stereo = ~10MB/min), which is unnecessarily large for a "download and share"
+   * use case. MP3 at 192kbps is roughly a 5-6x size reduction at a quality level most
+   * listeners can't distinguish from the source for spoken-word/podcast content.
+   */
+  const audioBufferToMp3Blob = (
+    audioBuffer: AudioBuffer,
+    opts: { sampleRate?: number; channels?: 1 | 2; kbps?: number } = {},
+  ): Blob => {
+    const targetRate = opts.sampleRate ?? 44100;
+    const targetChannels: 1 | 2 = opts.channels ?? 2;
+    const kbps = opts.kbps ?? 192;
+    const srcRate = audioBuffer.sampleRate;
+    const ratio = srcRate / targetRate;
+    const newLength = Math.floor(audioBuffer.length / ratio);
+    const lastIdx = audioBuffer.length - 1;
+
+    const ch0 = audioBuffer.getChannelData(0);
+    const ch1 = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : ch0;
+
+    const left = new Int16Array(newLength);
+    const right = targetChannels === 2 ? new Int16Array(newLength) : null;
+
+    for (let i = 0; i < newLength; i++) {
+      const srcIdx = i * ratio;
+      const idx = Math.floor(srcIdx);
+      const frac = srcIdx - idx;
+      const next = Math.min(idx + 1, lastIdx);
+      if (targetChannels === 1) {
+        const s0 = ((ch0[idx] || 0) + (ch1[idx] || 0)) / 2;
+        const s1 = ((ch0[next] || 0) + (ch1[next] || 0)) / 2;
+        left[i] = Math.max(-1, Math.min(1, s0 + (s1 - s0) * frac)) * 0x7fff;
+      } else {
+        const l0 = ch0[idx] || 0, l1 = ch0[next] || 0;
+        const r0 = ch1[idx] || 0, r1 = ch1[next] || 0;
+        left[i] = Math.max(-1, Math.min(1, l0 + (l1 - l0) * frac)) * 0x7fff;
+        right![i] = Math.max(-1, Math.min(1, r0 + (r1 - r0) * frac)) * 0x7fff;
+      }
+    }
+
+    const encoder = new Mp3Encoder(targetChannels, targetRate, kbps);
+    const chunks: Uint8Array[] = [];
+    const blockSize = 1152; // lamejs requirement: encode in multiples of this frame size
+    for (let i = 0; i < newLength; i += blockSize) {
+      const leftChunk = left.subarray(i, i + blockSize);
+      const mp3buf = targetChannels === 2
+        ? encoder.encodeBuffer(leftChunk, right!.subarray(i, i + blockSize))
+        : encoder.encodeBuffer(leftChunk);
+      if (mp3buf.length > 0) chunks.push(mp3buf);
+    }
+    const endBuf = encoder.flush();
+    if (endBuf.length > 0) chunks.push(endBuf);
+
+    return new Blob(chunks as BlobPart[], { type: 'audio/mp3' });
   };
 
   const fmtChunkTs = (sec: number) => {
@@ -2646,14 +2708,32 @@ function RealtimeMeeting() {
                             ⬇
                           </button>
                           {((rec.source !== 'realtimekit') || !!rec.download_url) && (
-                            <button
-                              className="px-2.5 py-1.5 bg-teal-700 hover:bg-teal-600 rounded text-white text-xs disabled:opacity-40"
-                              onClick={() => downloadRecordingAudio(rec)}
-                              disabled={extractingAudioKey === rec.key}
-                              title="Download audio only (WAV, 44.1 kHz stereo)"
-                            >
-                              {extractingAudioKey === rec.key ? '⏳' : '🎵'}
-                            </button>
+                            <div className="relative">
+                              <button
+                                className="px-2.5 py-1.5 bg-teal-700 hover:bg-teal-600 rounded text-white text-xs disabled:opacity-40"
+                                onClick={() => setAudioFormatMenuKey(audioFormatMenuKey === rec.key ? null : rec.key)}
+                                disabled={extractingAudioKey === rec.key}
+                                title="Download audio only (choose WAV or MP3)"
+                              >
+                                {extractingAudioKey === rec.key ? '⏳' : '🎵'}
+                              </button>
+                              {audioFormatMenuKey === rec.key && (
+                                <div className="absolute right-0 top-full mt-1 z-10 bg-slate-800 border border-slate-600 rounded shadow-lg overflow-hidden">
+                                  <button
+                                    className="block w-full px-3 py-1.5 text-left text-xs text-white hover:bg-slate-700 whitespace-nowrap"
+                                    onClick={() => { setAudioFormatMenuKey(null); downloadRecordingAudio(rec, 'wav'); }}
+                                  >
+                                    WAV <span className="text-slate-400">— høy kvalitet, stor fil</span>
+                                  </button>
+                                  <button
+                                    className="block w-full px-3 py-1.5 text-left text-xs text-white hover:bg-slate-700 whitespace-nowrap"
+                                    onClick={() => { setAudioFormatMenuKey(null); downloadRecordingAudio(rec, 'mp3'); }}
+                                  >
+                                    MP3 <span className="text-slate-400">— liten fil, 192kbps</span>
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           )}
                           {((rec.source !== 'realtimekit') || !!rec.download_url) && (
                             <button
