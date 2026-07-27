@@ -1,4 +1,5 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
+import { createPortal } from 'react-dom';
 import {
   RealtimeKitProvider,
   useRealtimeKitClient,
@@ -557,6 +558,8 @@ function RealtimeMeeting() {
   const [extractingAudioKey, setExtractingAudioKey] = useState<string | null>(null);
   const [audioExtractError, setAudioExtractError] = useState<Record<string, string>>({});
   const [audioFormatMenuKey, setAudioFormatMenuKey] = useState<string | null>(null);
+  const [audioFormatMenuPos, setAudioFormatMenuPos] = useState<{ top: number; right: number } | null>(null);
+  const [audioFormatMenuRec, setAudioFormatMenuRec] = useState<any | null>(null);
   const [lobbyTab, setLobbyTab] = useState<'meetings' | 'recordings' | 'slugs'>('meetings');
   const [playingKey, setPlayingKey] = useState<string | null>(null);
   const [copiedTranscript, setCopiedTranscript] = useState<string | null>(null);
@@ -2708,32 +2711,23 @@ function RealtimeMeeting() {
                             ⬇
                           </button>
                           {((rec.source !== 'realtimekit') || !!rec.download_url) && (
-                            <div className="relative">
-                              <button
-                                className="px-2.5 py-1.5 bg-teal-700 hover:bg-teal-600 rounded text-white text-xs disabled:opacity-40"
-                                onClick={() => setAudioFormatMenuKey(audioFormatMenuKey === rec.key ? null : rec.key)}
-                                disabled={extractingAudioKey === rec.key}
-                                title="Download audio only (choose WAV or MP3)"
-                              >
-                                {extractingAudioKey === rec.key ? '⏳' : '🎵'}
-                              </button>
-                              {audioFormatMenuKey === rec.key && (
-                                <div className="absolute right-0 top-full mt-1 z-10 bg-slate-800 border border-slate-600 rounded shadow-lg overflow-hidden">
-                                  <button
-                                    className="block w-full px-3 py-1.5 text-left text-xs text-white hover:bg-slate-700 whitespace-nowrap"
-                                    onClick={() => { setAudioFormatMenuKey(null); downloadRecordingAudio(rec, 'wav'); }}
-                                  >
-                                    WAV <span className="text-slate-400">— høy kvalitet, stor fil</span>
-                                  </button>
-                                  <button
-                                    className="block w-full px-3 py-1.5 text-left text-xs text-white hover:bg-slate-700 whitespace-nowrap"
-                                    onClick={() => { setAudioFormatMenuKey(null); downloadRecordingAudio(rec, 'mp3'); }}
-                                  >
-                                    MP3 <span className="text-slate-400">— liten fil, 192kbps</span>
-                                  </button>
-                                </div>
-                              )}
-                            </div>
+                            <button
+                              className="px-2.5 py-1.5 bg-teal-700 hover:bg-teal-600 rounded text-white text-xs disabled:opacity-40"
+                              onClick={(e) => {
+                                if (audioFormatMenuKey === rec.key) {
+                                  setAudioFormatMenuKey(null);
+                                  return;
+                                }
+                                const r = e.currentTarget.getBoundingClientRect();
+                                setAudioFormatMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+                                setAudioFormatMenuKey(rec.key);
+                                setAudioFormatMenuRec(rec);
+                              }}
+                              disabled={extractingAudioKey === rec.key}
+                              title="Download audio only (choose WAV or MP3)"
+                            >
+                              {extractingAudioKey === rec.key ? '⏳' : '🎵'}
+                            </button>
                           )}
                           {((rec.source !== 'realtimekit') || !!rec.download_url) && (
                             <button
@@ -2946,6 +2940,33 @@ function RealtimeMeeting() {
         <div className="flex flex-col flex-1 gap-6 p-8 overflow-y-auto">
           <SlugManagement userRooms={myRooms.standardRooms} />
         </div>
+        )}
+
+        {/* Audio download format menu — rendered via portal into document.body so it isn't
+            clipped by the recording card's overflow-hidden (needed there to round the corners
+            of the video/thumbnail area). Positioned at the button's coordinates on open. */}
+        {audioFormatMenuKey && audioFormatMenuRec && audioFormatMenuPos && createPortal(
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setAudioFormatMenuKey(null)} />
+            <div
+              className="fixed z-50 bg-slate-800 border border-slate-600 rounded shadow-lg overflow-hidden"
+              style={{ top: audioFormatMenuPos.top, right: audioFormatMenuPos.right }}
+            >
+              <button
+                className="block w-full px-3 py-1.5 text-left text-xs text-white hover:bg-slate-700 whitespace-nowrap"
+                onClick={() => { const rec = audioFormatMenuRec; setAudioFormatMenuKey(null); downloadRecordingAudio(rec, 'wav'); }}
+              >
+                WAV <span className="text-slate-400">— høy kvalitet, stor fil</span>
+              </button>
+              <button
+                className="block w-full px-3 py-1.5 text-left text-xs text-white hover:bg-slate-700 whitespace-nowrap"
+                onClick={() => { const rec = audioFormatMenuRec; setAudioFormatMenuKey(null); downloadRecordingAudio(rec, 'mp3'); }}
+              >
+                MP3 <span className="text-slate-400">— liten fil, 192kbps</span>
+              </button>
+            </div>
+          </>,
+          document.body
         )}
 
       </div>
