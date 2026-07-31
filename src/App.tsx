@@ -556,6 +556,8 @@ function RealtimeMeeting() {
   const [transcripts, setTranscripts] = useState<Record<string, string>>({});
   const [transcribeProgress, setTranscribeProgress] = useState<{ current: number; total: number } | null>(null);
   const [extractingAudioKey, setExtractingAudioKey] = useState<string | null>(null);
+  const [sharingKey, setSharingKey] = useState<string | null>(null);
+  const [copiedShareKey, setCopiedShareKey] = useState<string | null>(null);
   const [audioExtractError, setAudioExtractError] = useState<Record<string, string>>({});
   const [audioFormatMenuKey, setAudioFormatMenuKey] = useState<string | null>(null);
   const [audioFormatMenuPos, setAudioFormatMenuPos] = useState<{ top: number; right: number } | null>(null);
@@ -1303,6 +1305,29 @@ function RealtimeMeeting() {
         `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(rec.key)}&token=${encodeURIComponent(stored.emailVerificationToken)}${asUserQ}`,
         '_blank'
       );
+    }
+  };
+
+  const shareRecording = async (rec: any) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    setSharingKey(rec.key);
+    try {
+      const asUser = activeAccount && activeAccount !== stored.email ? activeAccount : undefined;
+      const resp = await fetch('https://api.vegvisr.org/realtime/recordings/share-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Token': stored.emailVerificationToken },
+        body: JSON.stringify({ key: rec.key, fileName: rec.name, ...(asUser ? { asUser } : {}) }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data?.url) throw new Error(data?.error || 'Failed to create share link');
+      await navigator.clipboard.writeText(data.url);
+      setCopiedShareKey(rec.key);
+      setTimeout(() => setCopiedShareKey(prev => (prev === rec.key ? null : prev)), 2000);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to create share link');
+    } finally {
+      setSharingKey(null);
     }
   };
 
@@ -2739,6 +2764,16 @@ function RealtimeMeeting() {
                               {transcribingKey === rec.key
                                 ? (transcribeProgress ? `⏳ ${transcribeProgress.current}/${transcribeProgress.total}` : '⏳')
                                 : '📝 Transcribe'}
+                            </button>
+                          )}
+                          {canManageRecs && rec.source !== 'realtimekit' && (
+                            <button
+                              className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 rounded text-white text-xs disabled:opacity-40"
+                              onClick={() => shareRecording(rec)}
+                              disabled={sharingKey === rec.key}
+                              title="Copy a shareable link (valid 7 days)"
+                            >
+                              {sharingKey === rec.key ? '⏳' : copiedShareKey === rec.key ? '✅ Copied' : '🔗 Share'}
                             </button>
                           )}
                           {canManageRecs && (
