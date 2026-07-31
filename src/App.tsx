@@ -1309,6 +1309,21 @@ function RealtimeMeeting() {
   };
 
   const shareRecording = async (rec: any) => {
+    // Permanent public playUrl (founder's own custom R2 domain, or the shared
+    // realtimevideos.vegvisr.org bucket) — just copy it, no token needed.
+    if (rec.playUrlPermanent && rec.playUrl) {
+      try {
+        await navigator.clipboard.writeText(rec.playUrl);
+        setCopiedShareKey(rec.key);
+        setTimeout(() => setCopiedShareKey(prev => (prev === rec.key ? null : prev)), 2000);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'Failed to copy share link');
+      }
+      return;
+    }
+
+    // Otherwise the recording only has a short-lived (1h) presigned playUrl —
+    // mint a longer-lived share token so the copied link doesn't expire on the recipient.
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) return;
     setSharingKey(rec.key);
@@ -2771,7 +2786,7 @@ function RealtimeMeeting() {
                               className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 rounded text-white text-xs disabled:opacity-40"
                               onClick={() => shareRecording(rec)}
                               disabled={sharingKey === rec.key}
-                              title="Copy a shareable link (valid 7 days)"
+                              title={rec.playUrlPermanent ? 'Copy the permanent public link' : 'Copy a shareable link (valid 7 days)'}
                             >
                               {sharingKey === rec.key ? '⏳' : copiedShareKey === rec.key ? '✅ Copied' : '🔗 Share'}
                             </button>
