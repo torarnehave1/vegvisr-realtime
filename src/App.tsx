@@ -37,6 +37,8 @@ import ParticipantsPanel from './components/ParticipantsPanel';
 import ImpersonationBar from './components/ImpersonationBar';
 import { AudioRecorder } from './components/AudioRecorder';
 import { WaveformPlayer } from './components/WaveformPlayer';
+import { useMeetingAudioRecorder } from './hooks/useMeetingAudioRecorder';
+import { uploadRecordingFile } from './lib/recordingUpload';
 import { useMeetingSession } from './hooks/useMeetingSession';
 import { config } from './lib/rtkConfig';
 import { MobileMeeting } from './components/MobileMeeting';
@@ -140,6 +142,30 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
 
   // Drag state for the participants panel lives inside the panel itself now.
   const [showParticipants, setShowParticipants] = useState(false);
+
+  // ── Podcast audio recording (all participants, browser-side) ────────────────
+  // Independent of meeting.recording above: that one is RealtimeKit's and is
+  // currently killed at ~75s by a false ALL_PEERS_LEFT. This mixes every
+  // participant's audio track locally, so nothing server-side can stop it.
+  const audioRec = useMeetingAudioRecorder(meeting);
+  const [audioRecUploading, setAudioRecUploading] = useState(false);
+  const [audioRecProgress, setAudioRecProgress] = useState<number | null>(null);
+
+  const saveMeetingAudio = async () => {
+    if (!audioRec.result) return;
+    setAudioRecUploading(true);
+    setAudioRecProgress(0);
+    const res = await uploadRecordingFile(audioRec.result.file, { onProgress: setAudioRecProgress });
+    setAudioRecUploading(false);
+    setAudioRecProgress(null);
+    if (res.ok) {
+      audioRec.reset();
+      alert(`Saved ${res.name} to your recordings.`);
+    } else {
+      // Keep the take in memory so a failed upload can be retried.
+      audioRec.setError(`Upload failed: ${res.error}`);
+    }
+  };
 
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
@@ -438,9 +464,94 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
               )}
             </span>
           )}
+          {/* Podcast audio recording — mixes every participant's mic in the
+              browser. Host-only and desktop-only for the same reasons as the
+              video record button above. */}
+          {isHost && (
+            <span className="hidden sm:inline-flex gap-2">
+              {audioRec.state === 'idle' && (
+                <button
+                  className="px-3 py-1.5 rounded text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors"
+                  onClick={audioRec.start}
+                  title="Record audio only (all participants) — unaffected by the RealtimeKit auto-stop"
+                >
+                  🎙 Rec Audio
+                </button>
+              )}
+              {(audioRec.state === 'recording' || audioRec.state === 'paused') && (
+                <>
+                  <button
+                    className="px-3 py-1.5 rounded text-xs font-medium bg-red-600 hover:bg-red-500 text-white transition-colors"
+                    onClick={audioRec.stop}
+                    title="Stop audio recording"
+                  >
+                    ⏹ {fmtTime(audioRec.seconds)}
+                  </button>
+                  <button
+                    className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                      audioRec.state === 'paused'
+                        ? 'bg-yellow-600 hover:bg-yellow-500 text-white'
+                        : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                    }`}
+                    onClick={audioRec.togglePause}
+                    title={audioRec.state === 'paused' ? 'Resume audio recording' : 'Pause audio recording'}
+                  >
+                    {audioRec.state === 'paused' ? '▶' : '⏸'}
+                  </button>
+                  <span
+                    className="px-2 py-1.5 rounded text-xs bg-slate-800 text-slate-300"
+                    title="Microphones currently mixed into the recording"
+                  >
+                    🎧 {audioRec.voices}
+                  </span>
+                </>
+              )}
+              {audioRec.state === 'done' && (
+                <>
+                  <button
+                    className="px-3 py-1.5 rounded text-xs font-medium bg-emerald-700 hover:bg-emerald-600 text-white transition-colors disabled:opacity-40"
+                    onClick={saveMeetingAudio}
+                    disabled={audioRecUploading}
+                    title="Upload this recording to your recordings library"
+                  >
+                    {audioRecUploading
+                      ? `Saving${audioRecProgress != null ? ` ${audioRecProgress}%` : '…'}`
+                      : `⬆ Save ${fmtTime(audioRec.seconds)}`}
+                  </button>
+                  {/* Local copy: the take exists only in memory until the upload
+                      finishes, and leaving the meeting throws it away. */}
+                  <button
+                    className="px-3 py-1.5 rounded text-xs font-medium bg-sky-700 hover:bg-sky-600 text-white transition-colors"
+                    onClick={audioRec.downloadLocal}
+                    title="Download a copy to this computer"
+                  >
+                    ⬇
+                  </button>
+                  <button
+                    className="px-3 py-1.5 rounded text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors disabled:opacity-40"
+                    onClick={() => {
+                      if (window.confirm('Discard this recording? It has not been saved and cannot be recovered.')) {
+                        audioRec.reset();
+                      }
+                    }}
+                    disabled={audioRecUploading}
+                    title="Discard this audio recording"
+                  >
+                    ✕
+                  </button>
+                </>
+              )}
+            </span>
+          )}
         </div>
         <div className="flex flex-1" />
       </footer>
+      {audioRec.error && (
+        <div className="px-3 py-2 text-xs text-red-300 bg-red-950/60 border-t border-red-900">
+          {audioRec.error}
+          <button className="ml-2 underline" onClick={() => audioRec.setError(null)}>dismiss</button>
+        </div>
+      )}
 
     </div>
   );
