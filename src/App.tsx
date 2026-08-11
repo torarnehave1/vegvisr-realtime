@@ -35,6 +35,8 @@ import { SlugJoinPrompt } from './components/SlugJoinPrompt';
 import { SpeakerView } from './components/SpeakerView';
 import ParticipantsPanel from './components/ParticipantsPanel';
 import ImpersonationBar from './components/ImpersonationBar';
+import { AudioRecorder } from './components/AudioRecorder';
+import { WaveformPlayer } from './components/WaveformPlayer';
 import { useMeetingSession } from './hooks/useMeetingSession';
 import { config } from './lib/rtkConfig';
 import { MobileMeeting } from './components/MobileMeeting';
@@ -564,6 +566,7 @@ function RealtimeMeeting() {
   const [audioFormatMenuRec, setAudioFormatMenuRec] = useState<any | null>(null);
   const [lobbyTab, setLobbyTab] = useState<'meetings' | 'recordings' | 'slugs'>('meetings');
   const [playingKey, setPlayingKey] = useState<string | null>(null);
+  const [showAudioRecorder, setShowAudioRecorder] = useState(false);
   const [copiedTranscript, setCopiedTranscript] = useState<string | null>(null);
   const [waitingTitle, setWaitingTitle] = useState('');
   const [waitingImage, setWaitingImage] = useState('');
@@ -1025,6 +1028,7 @@ function RealtimeMeeting() {
 
       await fetchRecordings();
       alert(`Uploaded ${completeData.name || file.name} to your R2 bucket.`);
+      return true;
     } catch (err: any) {
       if (uploadSession?.uploadId && uploadSession?.key) {
         try {
@@ -1036,6 +1040,7 @@ function RealtimeMeeting() {
         } catch { /* ignore abort cleanup errors */ }
       }
       alert('Upload error: ' + err.message);
+      return false;
     } finally {
       setUploadingRecording(false);
       setUploadingRecordingProgress(null);
@@ -1043,12 +1048,12 @@ function RealtimeMeeting() {
     }
   };
 
-  const uploadRecordingToR2 = async (file: File) => {
+  const uploadRecordingToR2 = async (file: File): Promise<boolean> => {
     const stored = readStoredUser();
-    if (!stored?.emailVerificationToken) return;
+    if (!stored?.emailVerificationToken) return false;
     if (!canRoleManageMeetings(stored.role)) {
       alert('Only Admin or Superadmin users can upload videos to R2.');
-      return;
+      return false;
     }
     if (stored.role !== 'Superadmin') {
       return uploadRecordingDirect(file, stored);
@@ -1131,6 +1136,7 @@ function RealtimeMeeting() {
 
       await fetchRecordings();
       alert(`Uploaded ${completeData.name || file.name} to R2.`);
+      return true;
     } catch (err: any) {
       if (uploadSession?.uploadId && uploadSession?.key) {
         try {
@@ -1148,6 +1154,7 @@ function RealtimeMeeting() {
         } catch { /* ignore abort cleanup errors */ }
       }
       alert('Upload error: ' + err.message);
+      return false;
     } finally {
       setUploadingRecording(false);
       setUploadingRecordingProgress(null);
@@ -1805,6 +1812,26 @@ function RealtimeMeeting() {
     }
   };
 
+  /**
+   * Audio recordings live in the same recordings/ prefix as video, and the
+   * listing endpoint returns no content type — so the extension is the only
+   * signal available for choosing a waveform player over a video element.
+   */
+  const isAudioRecording = (rec: any): boolean => {
+    const name = String(rec?.name || rec?.key || '').toLowerCase().split('?')[0];
+    return /\.(webm|m4a|mp3|wav|ogg|oga|aac|flac)$/.test(name)
+      // A RealtimeKit cloud recording is always video, even with an odd filename.
+      && rec?.source !== 'realtimekit';
+  };
+
+  // Save a browser-recorded audio file through the normal upload path, so it
+  // lands in whichever R2 the user's config points at. Only closes the recorder
+  // when the upload actually succeeded — otherwise the take would be lost.
+  const saveAudioRecording = async (file: File) => {
+    const ok = await uploadRecordingToR2(file);
+    if (ok) setShowAudioRecorder(false);
+  };
+
   const getVideoUrl = (rec: any): string | null => {
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) return null;
@@ -1814,6 +1841,21 @@ function RealtimeMeeting() {
     // Legacy proxy fallback (still works, but loads bytes through the worker).
     const asUserQ = activeAccount && activeAccount !== stored.email ? `&asUser=${encodeURIComponent(activeAccount)}` : '';
     return `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(rec.key)}&token=${encodeURIComponent(stored.emailVerificationToken)}${asUserQ}`;
+  };
+
+  /**
+   * Bytes-through-the-worker URL. Slower than the direct R2 playUrl, but it is
+   * the only one that answers with CORS headers, so it is what any code that has
+   * to *read* the file (waveform peak extraction, transcription) must use.
+   */
+  const getWorkerDownloadUrl = (rec: any): string | null => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return null;
+    const params = new URLSearchParams({ token: stored.emailVerificationToken });
+    if (rec.source === 'realtimekit' && rec.download_url) params.set('rtk_url', rec.download_url);
+    else params.set('key', rec.key);
+    if (activeAccount && activeAccount !== stored.email) params.set('asUser', activeAccount);
+    return `https://api.vegvisr.org/realtime/recordings/download?${params.toString()}`;
   };
 
   const copyTranscript = (key: string) => {
@@ -2494,6 +2536,14 @@ function RealtimeMeeting() {
                         ? `Uploading${uploadingRecordingProgress != null ? ` ${uploadingRecordingProgress}%` : '…'}`
                         : '⬆ Upload Video to R2'}
                     </button>
+                    <button
+                      className="px-3 py-2 bg-red-700 hover:bg-red-600 rounded text-white text-xs disabled:opacity-40"
+                      disabled={uploadingRecording || showAudioRecorder}
+                      onClick={() => setShowAudioRecorder(true)}
+                      title="Record audio only (podcast / voice note) straight to your recordings"
+                    >
+                      🎙 Record Audio
+                    </button>
                   </>
                 )}
                 {recordings.some((r: any) => r.source === 'realtimekit') && (
@@ -2522,6 +2572,17 @@ function RealtimeMeeting() {
                 </button>
               </div>
             </div>
+
+            {showAudioRecorder && (
+              <div className="mb-4">
+                <AudioRecorder
+                  onComplete={saveAudioRecording}
+                  onCancel={() => setShowAudioRecorder(false)}
+                  busy={uploadingRecording}
+                  uploadProgress={uploadingRecordingProgress}
+                />
+              </div>
+            )}
 
             {/* Search + sort */}
             <div className="flex flex-col gap-3 mb-3 md:flex-row md:items-center md:justify-between">
@@ -2653,6 +2714,7 @@ function RealtimeMeeting() {
                   : `${(rec.size / 1024).toFixed(0)} KB`;
                 const videoUrl = getVideoUrl(rec);
                 const isPlaying = playingKey === rec.key;
+                const isAudio = isAudioRecording(rec);
                 const isR2 = rec.source !== 'realtimekit';
                 const displayTitle = rec.title || rec.name;
                 const labels = Array.isArray(rec.labels) ? rec.labels : [];
@@ -2660,9 +2722,11 @@ function RealtimeMeeting() {
 
                 return (
                   <div key={rec.key} className="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
-                    {/* Video player / thumbnail area */}
-                    <div className="relative bg-black">
-                      {isPlaying && videoUrl ? (
+                    {/* Player / thumbnail area — audio renders as a waveform, video as a <video>. */}
+                    <div className={`relative ${isAudio ? 'bg-slate-900' : 'bg-black'}`}>
+                      {isPlaying && videoUrl && isAudio ? (
+                        <WaveformPlayer src={videoUrl} decodeSrc={getWorkerDownloadUrl(rec) || undefined} />
+                      ) : isPlaying && videoUrl ? (
                         <video
                           className="w-full max-h-[400px]"
                           src={videoUrl}
@@ -2672,9 +2736,9 @@ function RealtimeMeeting() {
                         />
                       ) : (
                         <button
-                          className="w-full flex items-center justify-center py-12 bg-slate-900 hover:bg-slate-800 transition-colors group min-h-[240px]"
+                          className={`w-full flex items-center justify-center bg-slate-900 hover:bg-slate-800 transition-colors group ${isAudio ? 'py-8 min-h-[140px]' : 'py-12 min-h-[240px]'}`}
                           onClick={() => setPlayingKey(rec.key)}
-                          title="Play recording"
+                          title={isAudio ? 'Play audio recording' : 'Play recording'}
                         >
                           {hasThumbnail && (
                             <img
@@ -2685,10 +2749,13 @@ function RealtimeMeeting() {
                           )}
                           <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/60 to-slate-950/10" />
                           <div className="relative flex flex-col items-center gap-2 px-6">
-                            <div className="w-14 h-14 rounded-full bg-white/10 group-hover:bg-white/20 flex items-center justify-center transition-colors">
-                              <span className="text-2xl ml-1">▶</span>
+                            <div className={`w-14 h-14 rounded-full flex items-center justify-center transition-colors ${isAudio ? 'bg-purple-600/30 group-hover:bg-purple-600/50' : 'bg-white/10 group-hover:bg-white/20'}`}>
+                              <span className="text-2xl ml-1">{isAudio ? '🎙' : '▶'}</span>
                             </div>
                             <span className="text-white text-base font-semibold text-center">{displayTitle}</span>
+                            {isAudio && (
+                              <span className="rounded-full bg-purple-900/70 px-2 py-0.5 text-[11px] text-purple-200">Audio</span>
+                            )}
                             {labels.length > 0 && (
                               <div className="flex flex-wrap justify-center gap-1">
                                 {labels.map((label: string) => (
