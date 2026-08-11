@@ -113,10 +113,18 @@ export default function ParticipantsPanel({
     window.addEventListener('mouseup', onUp);
   };
 
+  // RealtimeKit v2 removed the map-level moderation helpers
+  // (participants.disableAudio/disableVideo/kick taking an id) — the same
+  // operations now live on the participant object itself.
+  const findParticipant = (id: string) =>
+    meeting.participants.joined?.get?.(id) || meeting.participants.waitlisted?.get?.(id) || null;
+
   const muteAudio = async (id: string) => {
     setBusyId(id);
     try {
-      await meeting.participants.disableAudio(id);
+      const p = findParticipant(id);
+      if (!p) throw new Error(`participant ${id} not found`);
+      await p.disableAudio();
     } catch (e) {
       console.warn('[participants] disableAudio failed:', e);
     } finally {
@@ -126,7 +134,9 @@ export default function ParticipantsPanel({
   const stopVideo = async (id: string) => {
     setBusyId(id);
     try {
-      await meeting.participants.disableVideo(id);
+      const p = findParticipant(id);
+      if (!p) throw new Error(`participant ${id} not found`);
+      await p.disableVideo();
     } catch (e) {
       console.warn('[participants] disableVideo failed:', e);
     } finally {
@@ -137,7 +147,9 @@ export default function ParticipantsPanel({
     if (!window.confirm(`Send ${name} back to the waiting room?`)) return;
     setBusyId(id);
     try {
-      await meeting.participants.kick(id);
+      const p = findParticipant(id);
+      if (!p) throw new Error(`participant ${id} not found`);
+      await p.kick();
     } catch (e) {
       console.warn('[participants] kick failed:', e);
     } finally {
