@@ -1419,8 +1419,11 @@ function RealtimeMeeting() {
       window.open(rec.download_url, '_blank');
     } else {
       const asUserQ = activeAccount && activeAccount !== stored.email ? `&asUser=${encodeURIComponent(activeAccount)}` : '';
+      // redirect=1: this is a browser navigation, so the worker may hand off to a
+      // presigned R2 URL — the bytes come straight from the bucket, with resume.
+      // The fetch-based callers below must NOT set it (see the endpoint's comment).
       window.open(
-        `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(rec.key)}&token=${encodeURIComponent(stored.emailVerificationToken)}${asUserQ}`,
+        `https://api.vegvisr.org/realtime/recordings/download?key=${encodeURIComponent(rec.key)}&token=${encodeURIComponent(stored.emailVerificationToken)}&redirect=1${asUserQ}`,
         '_blank'
       );
     }
