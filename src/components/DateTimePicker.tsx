@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle, Calendar, ChevronLeft, ChevronRight, Clock, X } from 'lucide-react';
 
 /**
@@ -58,9 +59,9 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({
   const [view, setView] = useState<Date>(() => selected ?? new Date());
   const [cursor, setCursor] = useState<Date>(() => selected ?? new Date());
   const [keyNav, setKeyNav] = useState(false);
-  const [dropUp, setDropUp] = useState(false);
-  const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
+  const [pos, setPos] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef<HTMLButtonElement>(null);
 
   const locale = typeof navigator !== 'undefined' ? navigator.language || 'en-GB' : 'en-GB';
@@ -100,23 +101,83 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Flip above the trigger when the panel would not fit below (the slug tab scrolls).
-  useEffect(() => {
-    if (!open || !rootRef.current) return;
-    const rect = rootRef.current.getBoundingClientRect();
-    const PANEL = 430;
-    const below = window.innerHeight - rect.bottom;
-    const above = rect.top;
-    const up = below < PANEL && above > below;
-    setDropUp(up);
-    // Never let the panel run off-screen: scroll inside it when the side we picked is cramped.
-    setMaxHeight(Math.max(260, (up ? above : below) - 16));
+  /**
+   * The panel is portaled to <body> and positioned with fixed coordinates: the
+   * slug tab scrolls and sits under a sticky nav, so an absolutely positioned
+   * popover gets clipped (month header disappeared behind the tab bar). Fixed
+   * coordinates clamped to the viewport cannot be clipped by any ancestor.
+   */
+  const place = () => {
+    const trigger = rootRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const M = 8;
+    const vh = window.innerHeight;
+    const vw = window.innerWidth;
+    const width = Math.min(320, vw - 2 * M);
+    // scrollHeight excludes the borders that maxHeight (border-box) must cover,
+    // otherwise the panel keeps a 2px scrollbar at its ideal height.
+    const el = panelRef.current;
+    const wanted = el ? el.scrollHeight + (el.offsetHeight - el.clientHeight) : 430;
+    const below = vh - rect.bottom - M;
+    const above = rect.top - 2 * M;
+    const up = below < Math.min(wanted, 430) && above > below;
+    const full = Math.min(wanted, vh - 2 * M);
+    let maxHeight = Math.max(220, Math.min(wanted, up ? above : below));
+    let top = up ? rect.top - M - maxHeight : rect.bottom + M;
+    if (maxHeight < full) {
+      // Cramped on both sides: showing a scrollable stub hides the month header,
+      // so take the full height and centre it on the field instead — overlapping
+      // the trigger beats hiding half the calendar.
+      maxHeight = full;
+      top = rect.top + rect.height / 2 - maxHeight / 2;
+    }
+    top = Math.min(Math.max(M, top), vh - M - maxHeight);
+    const left = Math.min(Math.max(M, rect.left), vw - M - width);
+    setPos({ left, top, width, maxHeight });
+  };
+
+  // Place before paint, then again once the real height is known.
+  useLayoutEffect(() => {
+    if (!open) { setPos(null); return; }
+    place();
+    const raf = requestAnimationFrame(place);
+    return () => cancelAnimationFrame(raf);
   }, [open]);
+
+  /**
+   * Follow the trigger while the panel is open. A capture-phase 'scroll' on
+   * window does not fire for the lobby's inner scroll container, so bind to the
+   * trigger's actual scrollable ancestors (the tab pane) as well as the window.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const onMove = () => place();
+    const targets: (HTMLElement | Window)[] = [window];
+    for (let node = rootRef.current?.parentElement; node; node = node.parentElement) {
+      const { overflowY, overflowX } = window.getComputedStyle(node);
+      if (/(auto|scroll|overlay)/.test(`${overflowY} ${overflowX}`)) targets.push(node);
+    }
+    targets.forEach(t => t.addEventListener('scroll', onMove, { passive: true }));
+    window.addEventListener('resize', onMove);
+    return () => {
+      targets.forEach(t => t.removeEventListener('scroll', onMove));
+      window.removeEventListener('resize', onMove);
+    };
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The warning row and month length change the height — re-place on content change.
+  useLayoutEffect(() => {
+    if (open) place();
+  }, [isPast, view, open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      const inTrigger = rootRef.current?.contains(target);
+      const inPanel = panelRef.current?.contains(target);
+      if (!inTrigger && !inPanel) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
     document.addEventListener('mousedown', onDown);
@@ -223,13 +284,19 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({
         )}
       </div>
 
-      {open && (
+      {open && createPortal(
         <div
+          ref={panelRef}
           role="dialog"
-          style={{ maxHeight }}
-          className={`absolute z-50 w-[320px] overflow-y-auto bg-slate-900 border border-slate-700 rounded-lg shadow-xl shadow-black/40 p-3 space-y-3 ${
-            dropUp ? 'bottom-full mb-2' : 'mt-2'
-          }`}
+          style={{
+            position: 'fixed',
+            left: pos?.left ?? -9999,
+            top: pos?.top ?? -9999,
+            width: pos?.width ?? 320,
+            maxHeight: pos?.maxHeight,
+            visibility: pos ? 'visible' : 'hidden',
+          }}
+          className="z-[100] overflow-y-auto overscroll-contain bg-slate-900 border border-slate-700 rounded-lg shadow-xl shadow-black/50 p-3 space-y-3"
         >
           {/* Quick presets */}
           <div className="flex gap-2">
@@ -375,7 +442,8 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
