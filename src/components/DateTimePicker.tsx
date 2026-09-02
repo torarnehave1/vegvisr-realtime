@@ -146,9 +146,10 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({
   }, [open]);
 
   /**
-   * Follow the trigger while the panel is open. A capture-phase 'scroll' on
-   * window does not fire for the lobby's inner scroll container, so bind to the
-   * trigger's actual scrollable ancestors (the tab pane) as well as the window.
+   * Follow the trigger while the panel is open. 'scroll' does not bubble, and
+   * the field sits inside the lobby's own scroll pane, so bind to the trigger's
+   * actual scrollable ancestors as well as the window rather than relying on a
+   * single capture-phase listener.
    */
   useEffect(() => {
     if (!open) return;
