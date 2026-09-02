@@ -1,0 +1,366 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Calendar, ChevronLeft, ChevronRight, Clock, X } from 'lucide-react';
+
+/**
+ * Dark-themed date + time picker that speaks the same string format as
+ * <input type="datetime-local">: "YYYY-MM-DDTHH:mm" in local time, '' when unset.
+ * Drop-in replacement for that input — no extra dependencies, no timezone surprises.
+ */
+interface DateTimePickerProps {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  minuteStep?: number;
+}
+
+const pad = (n: number) => String(n).padStart(2, '0');
+
+/** Parse "YYYY-MM-DDTHH:mm" as local wall-clock time (never UTC). */
+function parseLocal(value: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], 0, 0);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function formatLocal(d: Date): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const sameDay = (a: Date, b: Date) =>
+  a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+/** 6 fixed weeks (42 cells) starting on the Monday on/before the 1st — stable panel height. */
+function monthGrid(view: Date): Date[] {
+  const first = new Date(view.getFullYear(), view.getMonth(), 1);
+  const offset = (first.getDay() + 6) % 7; // Monday = 0
+  const start = new Date(first.getFullYear(), first.getMonth(), 1 - offset);
+  return Array.from({ length: 42 }, (_, i) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + i));
+}
+
+/** Next full hour from now — the sane default when a day is picked before a time. */
+function nextFullHour(): { h: number; m: number } {
+  const now = new Date();
+  return { h: (now.getHours() + 1) % 24, m: 0 };
+}
+
+const QUICK_TIMES = ['08:00', '09:00', '10:00', '12:00', '15:00', '18:00', '19:00', '20:00'];
+
+export const DateTimePicker: React.FC<DateTimePickerProps> = ({
+  value,
+  onChange,
+  placeholder = 'No time set',
+  minuteStep = 5,
+}) => {
+  const selected = useMemo(() => parseLocal(value), [value]);
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState<Date>(() => selected ?? new Date());
+  const [cursor, setCursor] = useState<Date>(() => selected ?? new Date());
+  const [keyNav, setKeyNav] = useState(false);
+  const [dropUp, setDropUp] = useState(false);
+  const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const cursorRef = useRef<HTMLButtonElement>(null);
+
+  const locale = typeof navigator !== 'undefined' ? navigator.language || 'en-GB' : 'en-GB';
+  const timeZone = useMemo(() => {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; }
+  }, []);
+
+  const monthLabel = useMemo(
+    () => new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(view),
+    [locale, view]
+  );
+
+  const weekdays = useMemo(() => {
+    const fmt = new Intl.DateTimeFormat(locale, { weekday: 'short' });
+    // 2024-01-01 was a Monday.
+    return Array.from({ length: 7 }, (_, i) => {
+      const label = fmt.format(new Date(2024, 0, 1 + i)).replace(/\.$/, '');
+      return label.charAt(0).toUpperCase() + label.slice(1, 2);
+    });
+  }, [locale]);
+
+  const triggerLabel = useMemo(() => {
+    if (!selected) return placeholder;
+    return new Intl.DateTimeFormat(locale, {
+      weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(selected);
+  }, [selected, locale, placeholder]);
+
+  // Reopen on the selected month, not wherever the user last browsed.
+  useEffect(() => {
+    if (open) {
+      const base = selected ?? new Date();
+      setView(base);
+      setCursor(base);
+      setKeyNav(true); // land focus on the selected day so arrow keys work at once
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Flip above the trigger when the panel would not fit below (the slug tab scrolls).
+  useEffect(() => {
+    if (!open || !rootRef.current) return;
+    const rect = rootRef.current.getBoundingClientRect();
+    const PANEL = 430;
+    const below = window.innerHeight - rect.bottom;
+    const above = rect.top;
+    const up = below < PANEL && above > below;
+    setDropUp(up);
+    // Never let the panel run off-screen: scroll inside it when the side we picked is cramped.
+    setMaxHeight(Math.max(260, (up ? above : below) - 16));
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (open && keyNav) cursorRef.current?.focus();
+  }, [cursor, open, keyNav]);
+
+  const time = selected
+    ? { h: selected.getHours(), m: selected.getMinutes() }
+    : nextFullHour();
+
+  const commit = (day: Date, h: number, m: number) => {
+    onChange(formatLocal(new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, m)));
+  };
+
+  const pickDay = (day: Date) => {
+    commit(day, time.h, time.m);
+    setCursor(day);
+    if (day.getMonth() !== view.getMonth()) setView(day);
+  };
+
+  const setTime = (h: number, m: number) => commit(selected ?? new Date(), h, m);
+
+  const shiftMonth = (delta: number) =>
+    setView(v => new Date(v.getFullYear(), v.getMonth() + delta, 1));
+
+  const onGridKeyDown = (e: React.KeyboardEvent) => {
+    const moves: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
+    let next: Date | null = null;
+    if (e.key in moves) {
+      next = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + moves[e.key]);
+    } else if (e.key === 'PageUp') {
+      next = new Date(cursor.getFullYear(), cursor.getMonth() - 1, cursor.getDate());
+    } else if (e.key === 'PageDown') {
+      next = new Date(cursor.getFullYear(), cursor.getMonth() + 1, cursor.getDate());
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      pickDay(cursor);
+      return;
+    }
+    if (!next) return;
+    e.preventDefault();
+    setKeyNav(true);
+    setCursor(next);
+    if (next.getMonth() !== view.getMonth() || next.getFullYear() !== view.getFullYear()) setView(next);
+  };
+
+  const today = new Date();
+  const days = useMemo(() => monthGrid(view), [view]);
+
+  const minutes = useMemo(() => {
+    const list: number[] = [];
+    for (let m = 0; m < 60; m += minuteStep) list.push(m);
+    if (!list.includes(time.m)) list.push(time.m);
+    return list.sort((a, b) => a - b);
+  }, [minuteStep, time.m]);
+
+  const preset = (daysAhead: number) => {
+    const base = new Date();
+    const day = new Date(base.getFullYear(), base.getMonth(), base.getDate() + daysAhead);
+    commit(day, time.h, time.m);
+    setView(day);
+    setCursor(day);
+  };
+
+  return (
+    <div ref={rootRef} className="relative">
+      <div className="flex items-stretch gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          className={`flex-1 flex items-center gap-2 px-3 py-2 bg-slate-800 border rounded text-left transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+            open ? 'border-blue-500' : 'border-slate-600 hover:border-slate-500'
+          } ${selected ? 'text-white' : 'text-slate-500'}`}
+        >
+          <Calendar size={16} className="text-slate-400 shrink-0" />
+          <span className="truncate">{triggerLabel}</span>
+        </button>
+        {selected && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            title="Clear meeting time"
+            className="px-3 bg-slate-800 border border-slate-600 rounded text-slate-400 hover:text-white hover:border-slate-500 transition"
+          >
+            <X size={16} />
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div
+          role="dialog"
+          style={{ maxHeight }}
+          className={`absolute z-50 w-[320px] overflow-y-auto bg-slate-900 border border-slate-700 rounded-lg shadow-xl shadow-black/40 p-3 space-y-3 ${
+            dropUp ? 'bottom-full mb-2' : 'mt-2'
+          }`}
+        >
+          {/* Quick presets */}
+          <div className="flex gap-2">
+            {[['Today', 0], ['Tomorrow', 1], ['+1 week', 7]].map(([label, offset]) => (
+              <button
+                key={label as string}
+                type="button"
+                onClick={() => preset(offset as number)}
+                className="flex-1 px-2 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded text-slate-300 transition"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Month header */}
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => shiftMonth(-1)}
+              title="Previous month"
+              className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <span className="text-sm font-medium text-white capitalize">{monthLabel}</span>
+            <button
+              type="button"
+              onClick={() => shiftMonth(1)}
+              title="Next month"
+              className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+
+          {/* Calendar */}
+          <div>
+            <div className="grid grid-cols-7 mb-1">
+              {weekdays.map((w, i) => (
+                <div key={i} className="text-center text-[11px] font-medium text-slate-500 py-1">{w}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-0.5" onKeyDown={onGridKeyDown}>
+              {days.map(day => {
+                const inMonth = day.getMonth() === view.getMonth();
+                const isSelected = !!selected && sameDay(day, selected);
+                const isToday = sameDay(day, today);
+                const isCursor = sameDay(day, cursor);
+                return (
+                  <button
+                    key={day.getTime()}
+                    ref={isCursor ? cursorRef : undefined}
+                    type="button"
+                    tabIndex={isCursor ? 0 : -1}
+                    onClick={(e) => { setKeyNav(false); e.currentTarget.focus(); pickDay(day); }}
+                    className={`h-8 rounded text-sm transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      isSelected
+                        ? 'bg-blue-600 text-white font-semibold'
+                        : inMonth
+                          ? 'text-slate-200 hover:bg-slate-800'
+                          : 'text-slate-600 hover:bg-slate-800'
+                    } ${isToday && !isSelected ? 'ring-1 ring-inset ring-blue-500/60' : ''}`}
+                  >
+                    {day.getDate()}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Time */}
+          <div className="border-t border-slate-700 pt-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <Clock size={16} className="text-slate-400" />
+              <select
+                value={time.h}
+                onChange={e => setTime(Number(e.target.value), time.m)}
+                className="flex-1 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>{pad(h)}</option>
+                ))}
+              </select>
+              <span className="text-slate-500">:</span>
+              <select
+                value={time.m}
+                onChange={e => setTime(time.h, Number(e.target.value))}
+                className="flex-1 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {minutes.map(m => (
+                  <option key={m} value={m}>{pad(m)}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-4 gap-1">
+              {QUICK_TIMES.map(t => {
+                const [h, m] = t.split(':').map(Number);
+                const active = time.h === h && time.m === m;
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setTime(h, m)}
+                    className={`px-1 py-1 text-xs rounded border transition ${
+                      active
+                        ? 'bg-blue-600 border-blue-500 text-white'
+                        : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                    }`}
+                  >
+                    {t}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between border-t border-slate-700 pt-2">
+            <span className="text-[11px] text-slate-500 truncate" title={timeZone}>{timeZone}</span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => { onChange(''); setOpen(false); }}
+                className="px-2 py-1 text-xs text-slate-400 hover:text-white transition"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded transition"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

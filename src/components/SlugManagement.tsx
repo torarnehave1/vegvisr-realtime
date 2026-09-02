@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { readStoredUser } from '../lib/auth';
-import { Copy, Trash2, Edit2, Plus, Link2 } from 'lucide-react';
+import { Copy, Trash2, Edit2, Plus, Link2, CalendarClock } from 'lucide-react';
+import { DateTimePicker } from './DateTimePicker';
 
 interface Slug {
   id: string;
@@ -20,6 +21,31 @@ function isoToLocalInput(iso: string | null | undefined): string {
   if (isNaN(d.getTime())) return '';
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Human-readable local rendering of an ISO timestamp, e.g. "ti. 16. juni 2026, 15:00". */
+function formatScheduled(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat(navigator.language || 'en-GB', {
+    weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(d);
+}
+
+/** The window a share link is valid in: 1 hour before to 1 hour after the meeting time. */
+function shareWindow(localValue: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(localValue);
+  if (!m) return null;
+  const start = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+  if (isNaN(start.getTime())) return null;
+  const fmt = new Intl.DateTimeFormat(navigator.language || 'en-GB', {
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  const from = new Date(start.getTime() - 60 * 60 * 1000);
+  const to = new Date(start.getTime() + 60 * 60 * 1000);
+  return `${fmt.format(from)}–${fmt.format(to)}`;
 }
 
 interface Room {
@@ -301,13 +327,16 @@ export const SlugManagement: React.FC<SlugManagementProps> = ({ userRooms }) => 
 
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">Meeting time (optional)</label>
-            <input
-              type="datetime-local"
+            <DateTimePicker
               value={formData.scheduledStartAt}
-              onChange={(e) => setFormData({ ...formData, scheduledStartAt: e.target.value })}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={(v) => setFormData({ ...formData, scheduledStartAt: v })}
+              placeholder="No meeting time set"
             />
-            <p className="text-slate-500 text-xs mt-1">Set this to enable share links. Share link is valid 1 hour before to 1 hour after this time.</p>
+            <p className="text-slate-500 text-xs mt-1">
+              {formData.scheduledStartAt && shareWindow(formData.scheduledStartAt)
+                ? `Share link valid ${shareWindow(formData.scheduledStartAt)} on the selected day.`
+                : 'Set this to enable share links. Share link is valid 1 hour before to 1 hour after this time.'}
+            </p>
           </div>
 
           <div className="flex gap-3">
@@ -350,9 +379,15 @@ export const SlugManagement: React.FC<SlugManagementProps> = ({ userRooms }) => 
                   <span className="text-slate-500 text-xs">→ {getRoomLabel(s.meetingId)}</span>
                   {!s.active && <span className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded">Inactive</span>}
                 </div>
-                <p className="text-slate-400 text-xs">
-                  {s.allowedEmails.length} approved user{s.allowedEmails.length !== 1 ? 's' : ''}
-                </p>
+                <div className="flex items-center gap-3 text-xs text-slate-400">
+                  <span>{s.allowedEmails.length} approved user{s.allowedEmails.length !== 1 ? 's' : ''}</span>
+                  {formatScheduled(s.scheduledStartAt) && (
+                    <span className="flex items-center gap-1 text-slate-300">
+                      <CalendarClock size={12} className="text-slate-500" />
+                      {formatScheduled(s.scheduledStartAt)}
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="flex items-center gap-2">
