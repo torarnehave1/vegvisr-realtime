@@ -3487,14 +3487,15 @@ function AuthGate({ children }: { children: React.ReactNode }) {
                 className="w-8 h-8 rounded"
               />
               <ScreenRecorder />
-              {/* Build marker — confirms you're on the latest deploy. Bump
-                  the text every time you push if you want a versioned tag. */}
+              {/* Build marker — the commit this bundle was built from, injected by
+                  vite.config.ts at build time (CF_PAGES_COMMIT_SHA on Pages, local
+                  HEAD otherwise). Never bump this by hand; it cannot go stale. */}
               <span
-                aria-label="Build marker XA"
-                title="Build marker XA — visual confirmation of latest deploy"
-                className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-green-500 text-white text-[10px] font-bold tracking-wider"
+                aria-label={`Build ${__BUILD_ID__}`}
+                title={`Build ${__BUILD_ID__} — built ${new Date(__BUILD_TIME__).toLocaleString()}`}
+                className="inline-flex items-center justify-center h-6 px-2 rounded-full bg-green-500 text-white text-[10px] font-bold font-mono tracking-wider"
               >
-                XA
+                {__BUILD_ID__}
               </span>
             </div>
             {/* Wrapped so the index.css media query can hide AuthBar's email

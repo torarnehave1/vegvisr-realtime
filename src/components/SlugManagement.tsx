@@ -459,7 +459,11 @@ export const SlugManagement: React.FC<SlugManagementProps> = ({ userRooms }) => 
 
                 <button
                   onClick={() => generateShareLink(s)}
-                  disabled={!s.scheduledStartAt || shareLinkBusy === s.id}
+                  disabled={
+                    !s.scheduledStartAt ||
+                    shareLinkBusy === s.id ||
+                    shareStateFromIso(s.scheduledStartAt)?.tone === 'closed'
+                  }
                   title={s.scheduledStartAt
                     ? (shareStateFromIso(s.scheduledStartAt)?.tone === 'closed'
                         ? 'Share window closed — set a new meeting time before sharing'
