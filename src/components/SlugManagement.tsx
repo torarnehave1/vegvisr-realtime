@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { readStoredUser } from '../lib/auth';
-import { Copy, Trash2, Edit2, Plus, Link2, CalendarClock } from 'lucide-react';
+import { Copy, Trash2, Edit2, Plus, Link2, CalendarClock, AlertTriangle } from 'lucide-react';
 import { DateTimePicker } from './DateTimePicker';
 
 interface Slug {
@@ -34,18 +34,51 @@ function formatScheduled(iso: string | null | undefined): string | null {
   }).format(d);
 }
 
-/** The window a share link is valid in: 1 hour before to 1 hour after the meeting time. */
-function shareWindow(localValue: string): string | null {
+const HOUR = 60 * 60 * 1000;
+
+const hhmm = (d: Date) =>
+  new Intl.DateTimeFormat(navigator.language || 'en-GB', {
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(d);
+
+/**
+ * State of the share window for a meeting time: valid from 1 hour before to
+ * 1 hour after. Drives the hint under the picker and the warnings in the list.
+ */
+type ShareState = { tone: 'info' | 'warn' | 'closed'; text: string };
+
+function shareState(start: Date): ShareState {
+  const from = new Date(start.getTime() - HOUR);
+  const to = new Date(start.getTime() + HOUR);
+  const now = Date.now();
+  if (now > to.getTime()) {
+    return {
+      tone: 'closed',
+      text: `The share window for this time closed ${hhmm(to)}. Share links are rejected until you pick a new time.`,
+    };
+  }
+  if (now > start.getTime()) {
+    return {
+      tone: 'warn',
+      text: `This meeting time has passed. Share links still work until ${hhmm(to)}.`,
+    };
+  }
+  return { tone: 'info', text: `Share link valid ${hhmm(from)}–${hhmm(to)} on the selected day.` };
+}
+
+/** Share-window state for the picker's local "YYYY-MM-DDTHH:mm" value. */
+function shareStateFromLocal(localValue: string): ShareState | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(localValue);
   if (!m) return null;
   const start = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
-  if (isNaN(start.getTime())) return null;
-  const fmt = new Intl.DateTimeFormat(navigator.language || 'en-GB', {
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  });
-  const from = new Date(start.getTime() - 60 * 60 * 1000);
-  const to = new Date(start.getTime() + 60 * 60 * 1000);
-  return `${fmt.format(from)}–${fmt.format(to)}`;
+  return isNaN(start.getTime()) ? null : shareState(start);
+}
+
+/** Share-window state for a stored ISO timestamp. */
+function shareStateFromIso(iso: string | null | undefined): ShareState | null {
+  if (!iso) return null;
+  const start = new Date(iso);
+  return isNaN(start.getTime()) ? null : shareState(start);
 }
 
 interface Room {
@@ -332,11 +365,25 @@ export const SlugManagement: React.FC<SlugManagementProps> = ({ userRooms }) => 
               onChange={(v) => setFormData({ ...formData, scheduledStartAt: v })}
               placeholder="No meeting time set"
             />
-            <p className="text-slate-500 text-xs mt-1">
-              {formData.scheduledStartAt && shareWindow(formData.scheduledStartAt)
-                ? `Share link valid ${shareWindow(formData.scheduledStartAt)} on the selected day.`
-                : 'Set this to enable share links. Share link is valid 1 hour before to 1 hour after this time.'}
-            </p>
+            {(() => {
+              const state = formData.scheduledStartAt ? shareStateFromLocal(formData.scheduledStartAt) : null;
+              if (!state) {
+                return (
+                  <p className="text-slate-500 text-xs mt-1">
+                    Set this to enable share links. Share link is valid 1 hour before to 1 hour after this time.
+                  </p>
+                );
+              }
+              if (state.tone === 'info') {
+                return <p className="text-slate-500 text-xs mt-1">{state.text}</p>;
+              }
+              return (
+                <p className={`text-xs mt-1 flex items-center gap-1.5 ${state.tone === 'closed' ? 'text-red-400' : 'text-amber-400'}`}>
+                  <AlertTriangle size={13} className="shrink-0" />
+                  {state.text}
+                </p>
+              );
+            })()}
           </div>
 
           <div className="flex gap-3">
@@ -381,12 +428,23 @@ export const SlugManagement: React.FC<SlugManagementProps> = ({ userRooms }) => 
                 </div>
                 <div className="flex items-center gap-3 text-xs text-slate-400">
                   <span>{s.allowedEmails.length} approved user{s.allowedEmails.length !== 1 ? 's' : ''}</span>
-                  {formatScheduled(s.scheduledStartAt) && (
-                    <span className="flex items-center gap-1 text-slate-300">
-                      <CalendarClock size={12} className="text-slate-500" />
-                      {formatScheduled(s.scheduledStartAt)}
-                    </span>
-                  )}
+                  {formatScheduled(s.scheduledStartAt) && (() => {
+                    const state = shareStateFromIso(s.scheduledStartAt);
+                    const closed = state?.tone === 'closed';
+                    const passed = state?.tone === 'warn';
+                    return (
+                      <span
+                        title={state?.text}
+                        className={`flex items-center gap-1 ${closed ? 'text-red-400' : passed ? 'text-amber-400' : 'text-slate-300'}`}
+                      >
+                        {closed || passed
+                          ? <AlertTriangle size={12} className="shrink-0" />
+                          : <CalendarClock size={12} className="text-slate-500" />}
+                        {formatScheduled(s.scheduledStartAt)}
+                        {closed && <span className="text-red-400/80">· share window closed</span>}
+                      </span>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -403,7 +461,9 @@ export const SlugManagement: React.FC<SlugManagementProps> = ({ userRooms }) => 
                   onClick={() => generateShareLink(s)}
                   disabled={!s.scheduledStartAt || shareLinkBusy === s.id}
                   title={s.scheduledStartAt
-                    ? 'Generate share link (1 hour before to 1 hour after meeting time)'
+                    ? (shareStateFromIso(s.scheduledStartAt)?.tone === 'closed'
+                        ? 'Share window closed — set a new meeting time before sharing'
+                        : 'Generate share link (1 hour before to 1 hour after meeting time)')
                     : 'Set a meeting time first to enable share links'}
                   className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed"
                 >

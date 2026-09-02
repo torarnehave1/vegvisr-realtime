@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Calendar, ChevronLeft, ChevronRight, Clock, X } from 'lucide-react';
+import { AlertTriangle, Calendar, ChevronLeft, ChevronRight, Clock, X } from 'lucide-react';
 
 /**
  * Dark-themed date + time picker that speaks the same string format as
@@ -53,6 +53,7 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({
   minuteStep = 5,
 }) => {
   const selected = useMemo(() => parseLocal(value), [value]);
+  const isPast = !!selected && selected.getTime() < Date.now();
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<Date>(() => selected ?? new Date());
   const [cursor, setCursor] = useState<Date>(() => selected ?? new Date());
@@ -196,12 +197,19 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({
           onClick={() => setOpen(o => !o)}
           aria-haspopup="dialog"
           aria-expanded={open}
+          title={isPast ? 'This time is in the past' : undefined}
           className={`flex-1 flex items-center gap-2 px-3 py-2 bg-slate-800 border rounded text-left transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-            open ? 'border-blue-500' : 'border-slate-600 hover:border-slate-500'
+            open ? 'border-blue-500' : isPast ? 'border-amber-500/70 hover:border-amber-400' : 'border-slate-600 hover:border-slate-500'
           } ${selected ? 'text-white' : 'text-slate-500'}`}
         >
-          <Calendar size={16} className="text-slate-400 shrink-0" />
+          <Calendar size={16} className={`shrink-0 ${isPast ? 'text-amber-400' : 'text-slate-400'}`} />
           <span className="truncate">{triggerLabel}</span>
+          {isPast && (
+            <span className="ml-auto flex items-center gap-1 text-xs text-amber-400 shrink-0">
+              <AlertTriangle size={13} />
+              Past
+            </span>
+          )}
         </button>
         {selected && (
           <button
@@ -271,6 +279,7 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({
                 const isSelected = !!selected && sameDay(day, selected);
                 const isToday = sameDay(day, today);
                 const isCursor = sameDay(day, cursor);
+                const isPastDay = day.getTime() < new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
                 return (
                   <button
                     key={day.getTime()}
@@ -282,7 +291,7 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({
                       isSelected
                         ? 'bg-blue-600 text-white font-semibold'
                         : inMonth
-                          ? 'text-slate-200 hover:bg-slate-800'
+                          ? `${isPastDay ? 'text-slate-500' : 'text-slate-200'} hover:bg-slate-800`
                           : 'text-slate-600 hover:bg-slate-800'
                     } ${isToday && !isSelected ? 'ring-1 ring-inset ring-blue-500/60' : ''}`}
                   >
@@ -339,6 +348,13 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({
               })}
             </div>
           </div>
+
+          {isPast && (
+            <div className="flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-300">
+              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+              <span>This time is in the past. Pick a future date and time.</span>
+            </div>
+          )}
 
           <div className="flex items-center justify-between border-t border-slate-700 pt-2">
             <span className="text-[11px] text-slate-500 truncate" title={timeZone}>{timeZone}</span>
