@@ -667,6 +667,11 @@ function RealtimeMeeting() {
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [transcribingKey, setTranscribingKey] = useState<string | null>(null);
   const [transcripts, setTranscripts] = useState<Record<string, string>>({});
+  // Which recordings have a transcript stored beside them in the owner's bucket, and the save
+  // status of the one being written. Before 2026-09-12 a transcript lived only in this state and a
+  // reload lost it — there was no save step at all.
+  const [savedTranscripts, setSavedTranscripts] = useState<Record<string, boolean>>({});
+  const [transcriptSaveState, setTranscriptSaveState] = useState<Record<string, 'saving' | 'saved' | string>>({});
   const [transcribeProgress, setTranscribeProgress] = useState<{ current: number; total: number } | null>(null);
   const [extractingAudioKey, setExtractingAudioKey] = useState<string | null>(null);
   const [sharingKey, setSharingKey] = useState<string | null>(null);
@@ -1668,6 +1673,63 @@ function RealtimeMeeting() {
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
+  // Store the transcript as a sidecar object next to the recording, in whichever Cloudflare account
+  // owns it (own-R2 users keep their own text; the worker resolves the credentials).
+  const saveTranscript = async (rec: any, text: string) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken || !text.trim()) return;
+    const key = rec.key;
+    setTranscriptSaveState(prev => ({ ...prev, [key]: 'saving' }));
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/recordings/transcript', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Token': stored.emailVerificationToken },
+        body: JSON.stringify({
+          key,
+          text,
+          source: rec.source === 'realtimekit' ? 'browser-whisper (rtk)' : 'browser-whisper',
+          model: 'whisper-1',
+          asUser: activeAccount && activeAccount !== stored.email ? activeAccount : undefined,
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.success) {
+        setTranscriptSaveState(prev => ({ ...prev, [key]: data.error || `Save failed (${r.status})` }));
+        return;
+      }
+      setSavedTranscripts(prev => ({ ...prev, [key]: true }));
+      setTranscriptSaveState(prev => ({ ...prev, [key]: 'saved' }));
+    } catch (err: any) {
+      setTranscriptSaveState(prev => ({ ...prev, [key]: err?.message || 'Save failed' }));
+    }
+  };
+
+  // Read a previously saved transcript back, so it survives a reload.
+  const loadTranscript = async (rec: any) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    const key = rec.key;
+    setTranscripts(prev => ({ ...prev, [key]: 'Loading saved transcript…' }));
+    try {
+      const params = new URLSearchParams({ key });
+      if (activeAccount && activeAccount !== stored.email) params.set('asUser', activeAccount);
+      const r = await fetch(`https://api.vegvisr.org/realtime/recordings/transcript?${params.toString()}`, {
+        headers: { 'X-API-Token': stored.emailVerificationToken },
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.found || !data.text) {
+        setTranscripts(prev => { const n = { ...prev }; delete n[key]; return n; });
+        setSavedTranscripts(prev => ({ ...prev, [key]: false }));
+        return;
+      }
+      setTranscripts(prev => ({ ...prev, [key]: data.text }));
+      setSavedTranscripts(prev => ({ ...prev, [key]: true }));
+      setTranscriptSaveState(prev => ({ ...prev, [key]: 'saved' }));
+    } catch {
+      setTranscripts(prev => { const n = { ...prev }; delete n[key]; return n; });
+    }
+  };
+
   const transcribeRecording = async (rec: any) => {
     const stored = readStoredUser();
     if (!stored?.emailVerificationToken) return;
@@ -1749,7 +1811,10 @@ function RealtimeMeeting() {
         setTranscripts(prev => ({ ...prev, [key]: segments.join('\n\n') }));
       }
 
-      setTranscripts(prev => ({ ...prev, [key]: segments.join('\n\n') || 'No speech detected in recording.' }));
+      const finalText = segments.join('\n\n');
+      setTranscripts(prev => ({ ...prev, [key]: finalText || 'No speech detected in recording.' }));
+      // Persist it. Without this the text is lost on reload (2026-09-12).
+      if (finalText.trim()) await saveTranscript(rec, finalText);
     } catch (err: any) {
       setTranscripts(prev => ({ ...prev, [key]: `Error: ${err.message}` }));
     } finally {
@@ -3128,11 +3193,31 @@ function RealtimeMeeting() {
                         </div>
                       )}
 
+                      {/* A transcript already stored beside the recording, in the owner's bucket */}
+                      {!transcripts[rec.key] && (rec.hasTranscript || savedTranscripts[rec.key]) && (
+                        <div className="mt-2">
+                          <button
+                            className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-purple-300 text-xs"
+                            onClick={() => loadTranscript(rec)}
+                            title="Open the transcript saved with this recording"
+                          >
+                            📄 Open saved transcript
+                          </button>
+                        </div>
+                      )}
+
                       {/* Transcript area — large, copyable */}
                       {transcripts[rec.key] && (
                         <div className="mt-3 border border-slate-600 rounded-lg overflow-hidden">
                           <div className="flex items-center justify-between bg-slate-700/50 px-3 py-2">
-                            <span className="text-purple-400 text-xs font-medium">📝 Transcript</span>
+                            <span className="text-purple-400 text-xs font-medium">
+                              📝 Transcript
+                              {transcriptSaveState[rec.key] === 'saving' && <span className="ml-2 text-slate-400">saving…</span>}
+                              {transcriptSaveState[rec.key] === 'saved' && <span className="ml-2 text-emerald-400">saved with the recording</span>}
+                              {transcriptSaveState[rec.key] && !['saving', 'saved'].includes(transcriptSaveState[rec.key]) && (
+                                <span className="ml-2 text-red-400">not saved: {transcriptSaveState[rec.key]}</span>
+                              )}
+                            </span>
                             <div className="flex items-center gap-2">
                               <button
                                 className="px-2 py-1 bg-slate-600 hover:bg-slate-500 rounded text-white text-xs"
