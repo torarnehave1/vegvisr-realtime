@@ -112,7 +112,7 @@ const normalizeStandardRooms = (data: any): StandardRoom[] => {
 
 // ─── Meeting UI ──────────────────────────────────────────────────────────────
 
-function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) {
+function Meeting({ meetingId, isHost, authToken = null }: { meetingId: string; isHost: boolean; authToken?: string | null }) {
   const {
     meeting,
     roomJoined,
@@ -138,7 +138,7 @@ function Meeting({ meetingId, isHost }: { meetingId: string; isHost: boolean }) 
     denyGuest,
     states,
     updateStates,
-  } = useMeetingSession({ meetingId, isHost, allowDuo: false });
+  } = useMeetingSession({ meetingId, isHost, authToken, allowDuo: false });
 
   // Drag state for the participants panel lives inside the panel itself now.
   const [showParticipants, setShowParticipants] = useState(false);
@@ -704,6 +704,7 @@ function RealtimeMeeting() {
   // Active meeting tracking (set after joining, used by Meeting component)
   const [activeMeetingId, setActiveMeetingId] = useState<string | null>(null);
   const [isCallHost, setIsCallHost] = useState(false);
+  const [embedAuthToken, setEmbedAuthToken] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState(() => {
     const stored = readStoredUser();
     if (!stored?.email) return '';
@@ -788,6 +789,7 @@ function RealtimeMeeting() {
       if (!expectedMeetingId || data.meetingId !== expectedMeetingId) return;
       try {
         setTokenError(null);
+        setEmbedAuthToken(data.authToken);
         setActiveMeetingId(expectedMeetingId);
         setIsCallHost(data.isOwner === true);
         await initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
@@ -3419,7 +3421,7 @@ function RealtimeMeeting() {
               pre-MobileMeeting (e22f97c) behaviour: same Meeting layout on
               every viewport, controls always visible. */}
           <RtkUiProvider meeting={meeting} showSetupScreen>
-            <Meeting meetingId={activeMeetingId ?? ''} isHost={isCallHost} />
+            <Meeting meetingId={activeMeetingId ?? ''} isHost={isCallHost} authToken={embedAuthToken} />
             <RtkDialogManager />
             <RtkSettings />
             <RtkParticipantsAudio />

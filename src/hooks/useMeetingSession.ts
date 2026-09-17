@@ -32,6 +32,7 @@ const fmtTime = (totalSec: number) => {
 interface Options {
   meetingId: string;
   isHost: boolean;
+  authToken?: string | null;
   /** Allow the mobile-only 'duo' view mode. Desktop normalizes 'duo' -> 'speaker'. */
   allowDuo?: boolean;
 }
@@ -44,7 +45,7 @@ interface Options {
  *
  * Must be called inside a RealtimeKitProvider / RtkUiProvider tree.
  */
-export function useMeetingSession({ meetingId, isHost, allowDuo = false }: Options) {
+export function useMeetingSession({ meetingId, isHost, authToken = null, allowDuo = false }: Options) {
   const { meeting } = useRealtimeKitMeeting();
   const roomJoined = useRealtimeKitSelector((m) => m.self.roomJoined);
   const roomState = useRealtimeKitSelector((m) => m.self.roomState);
@@ -236,11 +237,12 @@ export function useMeetingSession({ meetingId, isHost, allowDuo = false }: Optio
     if (!isHost || !meetingId) return;
     const poll = async () => {
       const stored = readStoredUser();
-      if (!stored?.emailVerificationToken) return;
+      const token = authToken || stored?.emailVerificationToken;
+      if (!token) return;
       try {
         const r = await fetch(
           `https://api.vegvisr.org/realtime/waiting-room/list?meetingId=${encodeURIComponent(meetingId)}`,
-          { headers: { 'X-API-Token': stored.emailVerificationToken } },
+          { headers: { 'X-API-Token': token } },
         );
         const data = await r.json();
         if (data.success) {
@@ -285,12 +287,13 @@ export function useMeetingSession({ meetingId, isHost, allowDuo = false }: Optio
   const admitGuest = useCallback(
     async (guestEmail: string) => {
       const stored = readStoredUser();
-      if (!stored?.emailVerificationToken) return;
+      const token = authToken || stored?.emailVerificationToken;
+      if (!token) return;
       await fetch('https://api.vegvisr.org/realtime/waiting-room/admit', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Token': stored.emailVerificationToken,
+          'X-API-Token': token,
         },
         body: JSON.stringify({ meetingId, guestEmail }),
       });
@@ -302,12 +305,13 @@ export function useMeetingSession({ meetingId, isHost, allowDuo = false }: Optio
   const denyGuest = useCallback(
     async (guestEmail: string) => {
       const stored = readStoredUser();
-      if (!stored?.emailVerificationToken) return;
+      const token = authToken || stored?.emailVerificationToken;
+      if (!token) return;
       await fetch('https://api.vegvisr.org/realtime/waiting-room/deny', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Token': stored.emailVerificationToken,
+          'X-API-Token': token,
         },
         body: JSON.stringify({ meetingId, guestEmail }),
       });
