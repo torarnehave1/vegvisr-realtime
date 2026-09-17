@@ -614,6 +614,7 @@ function GuestWaitingScreen({
 
 function RealtimeMeeting() {
   const [meeting, initMeeting] = useRealtimeKitClient();
+  const isEmbedMode = new URL(window.location.href).searchParams.get('embed') === '1';
   const isMobile = useIsMobile();
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [noParams, setNoParams] = useState(false);
@@ -775,6 +776,29 @@ function RealtimeMeeting() {
   };
 
   const joinByMeetingId = (id: string) => fetchTokenAndJoin(id);
+
+  useEffect(() => {
+    if (!isEmbedMode) return;
+    const parentOrigin = 'https://minside.nibi.no';
+    const expectedMeetingId = new URL(window.location.href).searchParams.get('meetingId');
+    const handleBootstrap = async (event: MessageEvent) => {
+      if (event.origin !== parentOrigin || event.source !== window.parent) return;
+      const data = event.data;
+      if (data?.type !== 'NIBI_REALTIME_BOOTSTRAP' || typeof data.authToken !== 'string') return;
+      if (!expectedMeetingId || data.meetingId !== expectedMeetingId) return;
+      try {
+        setTokenError(null);
+        setActiveMeetingId(expectedMeetingId);
+        setIsCallHost(data.isOwner === true);
+        await initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
+      } catch (error: any) {
+        setTokenError(error?.message || 'Could not join the meeting.');
+      }
+    };
+    window.addEventListener('message', handleBootstrap);
+    window.parent.postMessage({ type: 'VEGVISR_REALTIME_READY', meetingId: expectedMeetingId }, parentOrigin);
+    return () => window.removeEventListener('message', handleBootstrap);
+  }, [initMeeting, isEmbedMode]);
 
   // Check if host is online and join if so — used by "waiting for host" retry button
   const checkHostAndJoin = async () => {
@@ -2153,6 +2177,7 @@ function RealtimeMeeting() {
   };
 
   useEffect(() => {
+    if (isEmbedMode) return;
     const pathname = window.location.pathname;
     const searchParams = new URL(window.location.href).searchParams;
     const authToken = searchParams.get('authToken');
@@ -3647,6 +3672,14 @@ export function useAuth() {
 }
 
 export default function App() {
+  const isEmbedMode = new URL(window.location.href).searchParams.get('embed') === '1';
+  if (isEmbedMode) {
+    return (
+      <div className="flex flex-col h-screen bg-slate-950 text-white">
+        <RealtimeMeeting />
+      </div>
+    );
+  }
   return (
     <AuthGate>
       <RealtimeMeeting />
