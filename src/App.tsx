@@ -236,6 +236,15 @@ function Meeting({ meetingId, isHost, authToken = null }: { meetingId: string; i
 
 
   if (roomState === 'ended' || roomState === 'left') {
+    if (new URL(window.location.href).searchParams.get('embed') === '1') {
+      window.parent.postMessage({ type: 'VEGVISR_REALTIME_LEFT', meetingId }, 'https://minside.nibi.no');
+      return (
+        <div className="flex flex-col items-center justify-center h-full gap-4 text-slate-200">
+          <p className="text-lg font-medium">Du har forlatt møtet.</p>
+          <p className="text-sm text-slate-400">Du kan gå tilbake til Min side.</p>
+        </div>
+      );
+    }
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-slate-200">
         <p className="text-lg font-medium">The meeting ended.</p>
