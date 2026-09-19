@@ -801,6 +801,12 @@ function RealtimeMeeting() {
         setEmbedAuthToken(data.authToken);
         setActiveMeetingId(expectedMeetingId);
         setIsCallHost(data.isOwner === true);
+        // The parent has already admitted/started this embedded session. Clear
+        // any pre-join state that may have been set by the meeting-info fetch.
+        setPendingMeetingId(null);
+        setGuestWaiting(false);
+        setKnockingMeetingId(null);
+        setGuestDenied(false);
         await initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
       } catch (error: any) {
         setTokenError(error?.message || 'Could not join the meeting.');
