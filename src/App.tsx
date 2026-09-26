@@ -683,6 +683,17 @@ function RealtimeMeeting() {
   const [savedTranscripts, setSavedTranscripts] = useState<Record<string, boolean>>({});
   const [transcriptSaveState, setTranscriptSaveState] = useState<Record<string, 'saving' | 'saved' | string>>({});
   const [transcribeProgress, setTranscribeProgress] = useState<{ current: number; total: number } | null>(null);
+  // "Save to product graph": turns a transcribed recording into a node in one of the owner's own
+  // knowledge graphs. The graph list is the owner's (knowledge_graphs.user_id), so she picks the
+  // same graph as last time instead of accumulating one graph per video.
+  const [graphPanelKey, setGraphPanelKey] = useState<string | null>(null);
+  const [myGraphs, setMyGraphs] = useState<Array<{ id: string; title: string }>>([]);
+  const [loadingGraphs, setLoadingGraphs] = useState(false);
+  const [graphChoice, setGraphChoice] = useState<string>('');
+  const [newGraphTitle, setNewGraphTitle] = useState('');
+  const [graphNodeTitle, setGraphNodeTitle] = useState('');
+  const [savingToGraphKey, setSavingToGraphKey] = useState<string | null>(null);
+  const [graphSaveResult, setGraphSaveResult] = useState<Record<string, { graphId: string; nodeId: string; category: string } | string>>({});
   const [extractingAudioKey, setExtractingAudioKey] = useState<string | null>(null);
   const [sharingKey, setSharingKey] = useState<string | null>(null);
   const [copiedShareKey, setCopiedShareKey] = useState<string | null>(null);
@@ -1434,6 +1445,179 @@ function RealtimeMeeting() {
       alert('AI describe error: ' + err.message);
     } finally {
       setGeneratingDescKey(null);
+    }
+  };
+
+  const KNOWLEDGE_API = 'https://knowledge.vegvisr.org';
+  const PRODUCT_META_AREA = '#DENLILLESTRIKKESKOLE';
+
+  /** Headers knowledge.vegvisr.org accepts from a logged-in browser session. A role header alone
+   * is rejected there since 2026-09-26 — the session token is what actually authenticates. */
+  const knowledgeHeaders = (stored: any) => ({
+    'Content-Type': 'application/json',
+    'x-user-role': stored.role || 'User',
+    'X-Session-Token': stored.emailVerificationToken,
+  });
+
+  const graphOwnerEmail = () => {
+    const stored = readStoredUser();
+    return (activeAccount && activeAccount !== stored?.email ? activeAccount : stored?.email) || '';
+  };
+
+  const loadMyGraphs = async () => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    setLoadingGraphs(true);
+    try {
+      const r = await fetch(
+        `${KNOWLEDGE_API}/getGraphsByUser?userId=${encodeURIComponent(graphOwnerEmail())}&limit=100`,
+        { headers: knowledgeHeaders(stored) },
+      );
+      const data = await r.json();
+      setMyGraphs(Array.isArray(data.graphs) ? data.graphs.map((g: any) => ({ id: g.id, title: g.title || g.id })) : []);
+    } catch {
+      setMyGraphs([]);
+    } finally {
+      setLoadingGraphs(false);
+    }
+  };
+
+  const openGraphPanel = (rec: any) => {
+    setGraphPanelKey(rec.key);
+    setGraphNodeTitle(rec.title || rec.name || '');
+    setNewGraphTitle('');
+    setGraphChoice('');
+    loadMyGraphs();
+  };
+
+  /**
+   * Save a transcribed recording into one of the owner's knowledge graphs as a video node.
+   *
+   * Uses the PERMANENT media URL on purpose: the graph is unpublished, and who may view it (and
+   * for how long) is a separate per-graph access mechanism — not something an expiring media link
+   * should try to enforce. A 7-day share token would simply leave a dead video in the node.
+   *
+   * Transcription is NOT redone here. It reuses the transcript the browser already produced (the
+   * chunked pipeline that handles 150MB+ files), which is why this works for full-length lessons.
+   */
+  const saveRecordingToProductGraph = async (rec: any) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    const transcript = (transcripts[rec.key] || '').trim();
+    if (!transcript || /^(Downloaded|Transcribing|Downloading|Loading)/.test(transcript)) {
+      setGraphSaveResult(prev => ({ ...prev, [rec.key]: 'Transcribe the recording first — the node needs its transcript.' }));
+      return;
+    }
+    const nodeTitle = graphNodeTitle.trim();
+    if (!nodeTitle) {
+      setGraphSaveResult(prev => ({ ...prev, [rec.key]: 'Give the node a title.' }));
+      return;
+    }
+    if (!(rec.playUrlPermanent && rec.playUrl)) {
+      setGraphSaveResult(prev => ({
+        ...prev,
+        [rec.key]: 'This recording has no permanent media URL — set cf_r2_public_base for the account, or sync the recording to R2 first.',
+      }));
+      return;
+    }
+    if (graphChoice === '__new__' && !newGraphTitle.trim()) {
+      setGraphSaveResult(prev => ({ ...prev, [rec.key]: 'Name the new graph.' }));
+      return;
+    }
+    if (!graphChoice) {
+      setGraphSaveResult(prev => ({ ...prev, [rec.key]: 'Pick a graph, or choose "New graph".' }));
+      return;
+    }
+
+    setSavingToGraphKey(rec.key);
+    setGraphSaveResult(prev => { const n = { ...prev }; delete n[rec.key]; return n; });
+    try {
+      const ownerEmail = graphOwnerEmail();
+
+      // One category from the transcript, via the AI describe endpoint that already exists.
+      let category = '';
+      let description = '';
+      try {
+        const d = await fetch('https://api.vegvisr.org/realtime/recordings/describe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Token': stored.emailVerificationToken },
+          body: JSON.stringify({
+            asUser: activeAccount && activeAccount !== stored.email ? activeAccount : undefined,
+            transcript,
+            title: nodeTitle,
+          }),
+        });
+        const dd = await d.json();
+        if (d.ok && dd.success) {
+          category = dd.category || '';
+          description = dd.description || '';
+        }
+      } catch { /* category is a nice-to-have, not a reason to lose the node */ }
+
+      // Create the graph on first use, so her portfolio starts existing. metadata.userId is what
+      // populates knowledge_graphs.user_id — without it the graph never shows in her list.
+      let graphId = graphChoice;
+      if (graphChoice === '__new__') {
+        graphId = crypto.randomUUID();
+        const createResp = await fetch(`${KNOWLEDGE_API}/saveGraphWithHistory`, {
+          method: 'POST',
+          headers: knowledgeHeaders(stored),
+          body: JSON.stringify({
+            id: graphId,
+            graphData: {
+              metadata: {
+                title: newGraphTitle.trim(),
+                description: `Produktgraf for ${newGraphTitle.trim()}.`,
+                createdBy: ownerEmail,
+                userId: ownerEmail,
+                metaArea: PRODUCT_META_AREA,
+                version: 0,
+              },
+              nodes: [],
+              edges: [],
+            },
+            override: false,
+          }),
+        });
+        const createData = await createResp.json();
+        if (!createResp.ok || createData.error) throw new Error(createData.error || `Could not create graph (${createResp.status})`);
+      }
+
+      const nodeId = crypto.randomUUID();
+      const info = [
+        `<video src="${rec.playUrl}" controls style="width:100%"></video>`,
+        description ? `\n${description}` : '',
+        `\n### Transkripsjon\n\n${transcript}`,
+      ].filter(Boolean).join('\n');
+
+      const addResp = await fetch(`${KNOWLEDGE_API}/addNode`, {
+        method: 'POST',
+        headers: knowledgeHeaders(stored),
+        body: JSON.stringify({
+          graphId,
+          node: {
+            id: nodeId,
+            label: nodeTitle,
+            type: 'fulltext',
+            color: '#4f6d7a',
+            info,
+            bibl: [rec.playUrl],
+            position: { x: 0, y: 0 },
+            visible: true,
+            ...(category ? { category } : {}),
+          },
+        }),
+      });
+      const addData = await addResp.json();
+      if (!addResp.ok || !addData.ok) throw new Error(addData.error || `Could not add node (${addResp.status})`);
+
+      setGraphSaveResult(prev => ({ ...prev, [rec.key]: { graphId, nodeId, category } }));
+      setGraphPanelKey(null);
+      loadMyGraphs();
+    } catch (err: any) {
+      setGraphSaveResult(prev => ({ ...prev, [rec.key]: err?.message || String(err) }));
+    } finally {
+      setSavingToGraphKey(null);
     }
   };
 
@@ -3282,6 +3466,99 @@ function RealtimeMeeting() {
                             value={transcripts[rec.key]}
                             onFocus={(e) => e.target.select()}
                           />
+                        </div>
+                      )}
+
+                      {/* Save the transcribed recording into one of the owner's own graphs */}
+                      {transcripts[rec.key] && (
+                        <div className="mt-2">
+                          {graphPanelKey !== rec.key ? (
+                            <button
+                              className="px-2 py-1 bg-emerald-700 hover:bg-emerald-600 rounded text-white text-xs"
+                              onClick={() => openGraphPanel(rec)}
+                              title="Lagre videoen og transkripsjonen som en node i en produktgraf"
+                            >
+                              📚 Lagre til produktgraf
+                            </button>
+                          ) : (
+                            <div className="rounded-lg border border-emerald-800 bg-slate-900/70 p-3 space-y-2">
+                              <div>
+                                <label className="block text-slate-400 text-xs mb-1">Nodetittel</label>
+                                <input
+                                  type="text"
+                                  className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
+                                  value={graphNodeTitle}
+                                  onChange={e => setGraphNodeTitle(e.target.value)}
+                                  placeholder="F.eks. Hjelp, jeg har mistet en maske!"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-slate-400 text-xs mb-1">
+                                  Graf {loadingGraphs && <span className="text-slate-500">(laster…)</span>}
+                                </label>
+                                <select
+                                  className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
+                                  value={graphChoice}
+                                  onChange={e => setGraphChoice(e.target.value)}
+                                >
+                                  <option value="">— velg graf —</option>
+                                  {myGraphs.map(g => (
+                                    <option key={g.id} value={g.id}>{g.title}</option>
+                                  ))}
+                                  <option value="__new__">＋ Ny graf…</option>
+                                </select>
+                              </div>
+                              {graphChoice === '__new__' && (
+                                <div>
+                                  <label className="block text-slate-400 text-xs mb-1">Navn på ny graf</label>
+                                  <input
+                                    type="text"
+                                    className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
+                                    value={newGraphTitle}
+                                    onChange={e => setNewGraphTitle(e.target.value)}
+                                    placeholder="Den lille strikkeskolen"
+                                  />
+                                </div>
+                              )}
+                              <p className="text-slate-500 text-[11px]">
+                                Metaområde: <span className="text-slate-400">{PRODUCT_META_AREA}</span> · kategori hentes automatisk fra transkripsjonen
+                              </p>
+                              <div className="flex gap-2">
+                                <button
+                                  className="px-2 py-1 bg-emerald-700 hover:bg-emerald-600 rounded text-white text-xs disabled:opacity-40"
+                                  onClick={() => saveRecordingToProductGraph(rec)}
+                                  disabled={savingToGraphKey === rec.key}
+                                >
+                                  {savingToGraphKey === rec.key ? 'Lagrer…' : 'Lagre'}
+                                </button>
+                                <button
+                                  className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-white text-xs disabled:opacity-40"
+                                  onClick={() => setGraphPanelKey(null)}
+                                  disabled={savingToGraphKey === rec.key}
+                                >
+                                  Avbryt
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {graphSaveResult[rec.key] && (
+                            typeof graphSaveResult[rec.key] === 'string' ? (
+                              <p className="mt-2 text-red-400 text-xs">{graphSaveResult[rec.key] as string}</p>
+                            ) : (
+                              <p className="mt-2 text-emerald-400 text-xs">
+                                Lagret{(graphSaveResult[rec.key] as any).category ? ` · kategori: ${(graphSaveResult[rec.key] as any).category}` : ''} ·{' '}
+                                <a
+                                  className="underline hover:text-emerald-300"
+                                  href={`https://www.vegvisr.org/gnew-viewer?graphId=${(graphSaveResult[rec.key] as any).graphId}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  åpne grafen
+                                </a>
+                              </p>
+                            )
+                          )}
                         </div>
                       )}
                     </div>
