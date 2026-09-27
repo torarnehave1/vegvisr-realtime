@@ -1584,11 +1584,14 @@ function RealtimeMeeting() {
       }
 
       const nodeId = crypto.randomUUID();
+      // realtime-video is the graph's own video node type (GNewRealtimeVideoNode): the player
+      // reads `path` — a full https URL passes through untouched — and renders `info` as
+      // markdown below it. A raw <video> tag inside a fulltext node is NOT rendered; the
+      // viewer prints it as literal text.
       const info = [
-        `<video src="${rec.playUrl}" controls style="width:100%"></video>`,
-        description ? `\n${description}` : '',
-        `\n### Transkripsjon\n\n${transcript}`,
-      ].filter(Boolean).join('\n');
+        description || '',
+        `### Transkripsjon\n\n${transcript}`,
+      ].filter(Boolean).join('\n\n');
 
       const addResp = await fetch(`${KNOWLEDGE_API}/addNode`, {
         method: 'POST',
@@ -1598,8 +1601,9 @@ function RealtimeMeeting() {
           node: {
             id: nodeId,
             label: nodeTitle,
-            type: 'fulltext',
-            color: '#4f6d7a',
+            type: 'realtime-video',
+            color: '#e0ecff',
+            path: rec.playUrl,
             info,
             bibl: [rec.playUrl],
             position: { x: 0, y: 0 },
