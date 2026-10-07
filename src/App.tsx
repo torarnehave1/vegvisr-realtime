@@ -61,6 +61,11 @@ type MyRoomsState = {
   standardRooms: StandardRoom[];
 };
 
+// `/?openroom` (the platform default open room) or `/?openroom=<slug|meetingId>` — a room the
+// owner has opened to guests. No login: the visitor types a name and is let straight in.
+const isOpenRoomUrl = () =>
+  typeof window !== 'undefined' && new URL(window.location.href).searchParams.has('openroom');
+
 const normalizeRole = (role: string | null | undefined) =>
   (role || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
 
@@ -721,6 +726,21 @@ function RealtimeMeeting() {
   const [guestWaiting, setGuestWaiting] = useState(false);
   const [guestDenied, setGuestDenied] = useState(false);
   const [knockingMeetingId, setKnockingMeetingId] = useState<string | null>(null);
+  // Open room — guest side (?openroom in the URL). `room` is '' for the platform default.
+  const [openRoomGuest, setOpenRoomGuest] = useState<{
+    room: string;
+    loading: boolean;
+    info: { meetingTitle?: string | null; hostName?: string | null } | null;
+    closed: string | null;
+  } | null>(null);
+  const [openRoomError, setOpenRoomError] = useState<string | null>(null);
+  // Open room — owner side (lobby toggle). Keyed by meeting id; presence = open.
+  const [openRooms, setOpenRooms] = useState<Record<string, { isDefault: boolean }>>({});
+  const [openRoomSlugs, setOpenRoomSlugs] = useState<Record<string, string[]>>({});
+  const [canSetDefaultOpenRoom, setCanSetDefaultOpenRoom] = useState(false);
+  const [togglingOpenRoom, setTogglingOpenRoom] = useState<string | null>(null);
+  const [openRoomToggleError, setOpenRoomToggleError] = useState<{ meetingId: string; message: string } | null>(null);
+  const [copiedOpenRoom, setCopiedOpenRoom] = useState<string | null>(null);
   // Active meeting tracking (set after joining, used by Meeting component)
   const [activeMeetingId, setActiveMeetingId] = useState<string | null>(null);
   const [isCallHost, setIsCallHost] = useState(false);
@@ -950,6 +970,7 @@ function RealtimeMeeting() {
         }
         // Load waiting room enabled state
         setWaitingRoomEnabled(!!data.waitingRoomEnabled);
+        fetchOpenRooms();
         // Update display name from config table if available
         if (data.displayName && !stored.displayName) {
           setDisplayName(data.displayName);
@@ -1107,6 +1128,80 @@ function RealtimeMeeting() {
       }
     } catch { /* ignore */ }
     finally { setTogglingWaitingRoom(false); }
+  };
+
+  const fetchOpenRooms = async () => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/open-room/status', {
+        headers: { 'X-API-Token': stored.emailVerificationToken },
+      });
+      const data = await r.json();
+      if (!data.success) return;
+      setOpenRooms(
+        (data.rooms || []).reduce((acc: Record<string, { isDefault: boolean }>, room: any) => {
+          acc[room.meetingId] = { isDefault: !!room.isDefault };
+          return acc;
+        }, {})
+      );
+      setOpenRoomSlugs(data.slugs || {});
+      setCanSetDefaultOpenRoom(!!data.canSetDefault);
+    } catch { /* ignore */ }
+  };
+
+  const toggleOpenRoom = async (meetingId: string, enabled: boolean, isDefault = false) => {
+    const stored = readStoredUser();
+    if (!stored?.emailVerificationToken) return;
+    setTogglingOpenRoom(meetingId);
+    setOpenRoomToggleError(null);
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/open-room/toggle', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Token': stored.emailVerificationToken,
+        },
+        body: JSON.stringify({ meetingId, enabled, isDefault }),
+      });
+      const data = await r.json();
+      if (!data.success) throw new Error(data.error || 'Could not change the open room setting');
+      // Re-read rather than patch locally: setting a new default clears the old one server-side.
+      await fetchOpenRooms();
+    } catch (err: any) {
+      setOpenRoomToggleError({ meetingId, message: err.message });
+    } finally {
+      setTogglingOpenRoom(null);
+    }
+  };
+
+  const getOpenRoomLink = (meetingId: string) => {
+    if (openRooms[meetingId]?.isDefault) return `${window.location.origin}/?openroom`;
+    const slug = openRoomSlugs[meetingId]?.[0];
+    return `${window.location.origin}/?openroom=${encodeURIComponent(slug || meetingId)}`;
+  };
+
+  const joinOpenRoom = async () => {
+    if (!openRoomGuest || !displayName.trim()) return;
+    setJoining(true);
+    setOpenRoomError(null);
+    try {
+      const r = await fetch('https://api.vegvisr.org/realtime/open-room/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room: openRoomGuest.room, name: displayName.trim() }),
+      });
+      const data = await r.json();
+      if (!data.success || !data.authToken) throw new Error(data.error || 'Could not join the room');
+      setActiveMeetingId(data.meetingId);
+      setIsCallHost(false);
+      await initMeeting({ authToken: data.authToken, defaults: { audio: false, video: false } });
+      setOpenRoomGuest(null);
+    } catch (err: any) {
+      setOpenRoomError(err.message);
+    } finally {
+      setJoining(false);
+    }
   };
 
   const fetchRecordings = async () => {
@@ -2390,6 +2485,21 @@ function RealtimeMeeting() {
 
     provideRtkDesignSystem(document.body, { theme: 'dark' });
 
+    // Open room — no login. Look the room up first so a closed room says so instead of
+    // offering a name field that can only fail.
+    if (isOpenRoomUrl()) {
+      const room = searchParams.get('openroom') || '';
+      setOpenRoomGuest({ room, loading: true, info: null, closed: null });
+      fetch(`https://api.vegvisr.org/realtime/open-room/info${room ? `?room=${encodeURIComponent(room)}` : ''}`)
+        .then(async (r) => {
+          const data = await r.json().catch(() => null);
+          if (data?.success) setOpenRoomGuest({ room, loading: false, info: data, closed: null });
+          else setOpenRoomGuest({ room, loading: false, info: null, closed: data?.error || 'This room is not open' });
+        })
+        .catch(() => setOpenRoomGuest({ room, loading: false, info: null, closed: 'Could not reach the server. Check your connection and reload.' }));
+      return;
+    }
+
     // Check for custom slug in pathname (e.g., /slowyou)
     const slugMatch = pathname.match(/^\/([a-z0-9\-]{3,50})$/);
     if (slugMatch) {
@@ -2435,6 +2545,61 @@ function RealtimeMeeting() {
     setNoParams(true);
     fetchMyRooms();
   }, []);
+
+  // Open room guest screen — a name, then straight in. Cleared once the meeting is initialised.
+  if (openRoomGuest) {
+    const { loading, info, closed } = openRoomGuest;
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-6 text-slate-200 p-8">
+        <div className="w-full max-w-sm bg-slate-800 border border-slate-700 rounded-xl p-6 flex flex-col gap-5 shadow-xl">
+          {loading ? (
+            <div className="flex justify-center py-6">
+              <div className="w-8 h-8 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : closed ? (
+            <div className="text-center flex flex-col gap-3">
+              <h1 className="text-lg font-semibold">Room closed</h1>
+              <p className="text-sm text-slate-400">{closed}</p>
+              <a href="/" className="text-sm text-sky-400 hover:text-sky-300">Sign in instead</a>
+            </div>
+          ) : (
+            <form
+              className="flex flex-col gap-5"
+              onSubmit={(e) => { e.preventDefault(); if (!joining) joinOpenRoom(); }}
+            >
+              <div className="text-center">
+                <h1 className="text-lg font-semibold">{info?.meetingTitle || 'Join Meeting'}</h1>
+                {info?.hostName && (
+                  <p className="text-sm text-slate-400 mt-1">Hosted by {info.hostName}</p>
+                )}
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="open-room-name" className="text-xs text-slate-400">Your name</label>
+                <input
+                  id="open-room-name"
+                  className="bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="Enter your name"
+                  maxLength={60}
+                  autoComplete="name"
+                  autoFocus
+                />
+              </div>
+              {openRoomError && <p className="text-red-400 text-sm">{openRoomError}</p>}
+              <button
+                type="submit"
+                className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded text-white font-medium transition-colors"
+                disabled={joining || !displayName.trim()}
+              >
+                {joining ? 'Joining…' : 'Join Meeting'}
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   // Pre-join screen — shown when meetingId is in URL, BEFORE user clicks Join
   if (pendingMeetingId) {
@@ -2653,6 +2818,62 @@ function RealtimeMeeting() {
                 >
                   ✕
                 </button>
+              </div>
+              )}
+              {canCreateMeetings && (
+              <div className="flex flex-col gap-1.5 bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <span className="text-xs text-slate-200">🔓 Open room</span>
+                    <p className="text-[10px] text-slate-500 mt-0.5">Anyone with the link joins as a guest — no login</p>
+                  </div>
+                  <button
+                    className={`relative shrink-0 w-10 h-5 rounded-full transition-colors ${openRooms[room.id] ? 'bg-emerald-600' : 'bg-slate-600'} disabled:opacity-40`}
+                    disabled={togglingOpenRoom === room.id}
+                    onClick={() => toggleOpenRoom(room.id, !openRooms[room.id])}
+                    title={openRooms[room.id] ? 'Close this room to guests' : 'Open this room to guests'}
+                    aria-pressed={!!openRooms[room.id]}
+                  >
+                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${openRooms[room.id] ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+                {openRooms[room.id] && (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <input
+                        readOnly
+                        className="flex-1 min-w-0 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-300 font-mono"
+                        value={getOpenRoomLink(room.id)}
+                        onFocus={(e) => e.target.select()}
+                      />
+                      <button
+                        className="px-2 py-1 bg-sky-600 hover:bg-sky-500 rounded text-white text-[11px] whitespace-nowrap"
+                        onClick={() => {
+                          navigator.clipboard.writeText(getOpenRoomLink(room.id)).then(() => {
+                            setCopiedOpenRoom(room.id);
+                            setTimeout(() => setCopiedOpenRoom(null), 2000);
+                          });
+                        }}
+                      >
+                        {copiedOpenRoom === room.id ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                    {canSetDefaultOpenRoom && (
+                      <label className="flex items-center gap-2 text-[11px] text-slate-400">
+                        <input
+                          type="checkbox"
+                          checked={openRooms[room.id].isDefault}
+                          disabled={togglingOpenRoom === room.id}
+                          onChange={(e) => toggleOpenRoom(room.id, true, e.target.checked)}
+                        />
+                        Use the short link <span className="font-mono">/?openroom</span> for this room
+                      </label>
+                    )}
+                  </>
+                )}
+                {openRoomToggleError?.meetingId === room.id && (
+                  <p className="text-[11px] text-red-400">{openRoomToggleError.message}</p>
+                )}
               </div>
               )}
               </React.Fragment>
@@ -3930,8 +4151,9 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
   // Anonymous visitors hitting a slug URL (e.g. /slowyou) bypass the login screen
   // and go straight into the inner app, which renders SlugJoinPrompt for the email entry.
-  const slugUrlMatch = typeof window !== 'undefined'
-    && /^\/[a-z0-9\-]{3,50}$/.test(window.location.pathname);
+  const slugUrlMatch = (typeof window !== 'undefined'
+    && /^\/[a-z0-9\-]{3,50}$/.test(window.location.pathname))
+    || isOpenRoomUrl();
 
   if (authStatus === 'anonymous') {
     if (slugUrlMatch) {
