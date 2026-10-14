@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   RealtimeKitProvider,
   useRealtimeKitClient,
+  useRealtimeKitSelector,
 } from '@cloudflare/realtimekit-react';
 import {
   RtkCameraToggle,
@@ -42,9 +43,10 @@ import { uploadRecordingFile } from './lib/recordingUpload';
 import { useMeetingSession } from './hooks/useMeetingSession';
 import { config } from './lib/rtkConfig';
 import { MobileMeeting } from './components/MobileMeeting';
-import { useIsMobile } from './hooks/useIsMobile';
+import { useIsMobile, useNarrowViewport } from './hooks/useIsMobile';
+import { flipCamera } from './lib/flipCamera';
 import BottomSheet from './components/BottomSheet';
-import { Home, Users, LayoutGrid, MoreHorizontal, Video, Link2, PlayCircle, Pencil, RefreshCw, Play, Square, FileText, Download, Music, Tag, Type, Trash2, Upload, Mic, CloudDownload } from 'lucide-react';
+import { Home, Users, LayoutGrid, MoreHorizontal, Video, Link2, PlayCircle, Pencil, RefreshCw, Play, Square, FileText, Download, Music, Tag, Type, Trash2, Upload, Mic, CloudDownload, SwitchCamera, VideoOff } from 'lucide-react';
 import { SheetAction } from './components/BottomSheet';
 
 const MAGIC_BASE = 'https://cookie.vegvisr.org';
@@ -191,6 +193,12 @@ function Meeting({ meetingId, isHost, authToken = null }: { meetingId: string; i
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
 
+  // Phone layout (< md): labelled control row, participants as a sheet, and a
+  // "More" sheet for view / name. Desktop keeps the original header + footer.
+  const narrow = useNarrowViewport();
+  const selfVideoOn = useRealtimeKitSelector((m) => m.self.videoEnabled);
+  const [moreOpen, setMoreOpen] = useState(false);
+
   // ── Music mode ──────────────────────────────────────────────────────────────
   // When enabled, the local mic is captured with noise suppression and
   // auto-gain turned OFF (these were the ones chopping music into pieces),
@@ -305,8 +313,8 @@ function Meeting({ meetingId, isHost, authToken = null }: { meetingId: string; i
           </span>
         </div>
       )}
-      <header className="flex items-center gap-3 h-12 border-b border-slate-700 w-full px-2 text-sm text-slate-200">
-        <RtkLogo meeting={meeting} />
+      <header className="flex items-center gap-3 h-12 max-md:h-14 border-b border-slate-700 w-full px-2 max-md:pl-3 text-sm text-slate-200">
+        {!narrow && <RtkLogo meeting={meeting} />}
         <RtkMeetingTitle meeting={meeting} />
         <span className="ml-2 font-mono text-xs text-slate-400" title="Meeting duration">
           🕐 {fmtTime(meetingSeconds)}
@@ -318,7 +326,7 @@ function Meeting({ meetingId, isHost, authToken = null }: { meetingId: string; i
           </span>
         )}
         <div className="ml-auto flex items-center gap-1">
-          {editingName ? (
+          {narrow ? null : editingName ? (
             <form className="flex items-center gap-1" onSubmit={async (e) => {
               e.preventDefault();
               if (nameDraft.trim() && meeting) {
@@ -346,6 +354,19 @@ function Meeting({ meetingId, isHost, authToken = null }: { meetingId: string; i
           )}
           {/* Single Participants button — opens combined Waiting Room +
               In-Meeting roster. Amber pulse when a host has guests knocking. */}
+          {narrow ? (
+            <button
+              type="button"
+              className={`min-h-11 px-3 rounded-xl flex items-center gap-1.5 text-sm font-bold ${
+                isHost && waitingGuests.length > 0 ? 'bg-amber-500 text-amber-950' : 'bg-slate-800 text-slate-200'
+              }`}
+              onClick={() => setShowParticipants((v) => !v)}
+              aria-label={isHost && waitingGuests.length > 0 ? `Participants, ${waitingGuests.length} waiting` : 'Participants'}
+            >
+              <Users size={20} aria-hidden="true" />
+              {isHost && waitingGuests.length > 0 ? `${waitingGuests.length} waiting` : 'People'}
+            </button>
+          ) : (
           <button
             className={`ml-2 px-2 py-1 rounded text-white text-xs font-medium ${
               isHost && waitingGuests.length > 0
@@ -357,6 +378,7 @@ function Meeting({ meetingId, isHost, authToken = null }: { meetingId: string; i
           >
             👥{isHost && waitingGuests.length > 0 ? ` 🖐${waitingGuests.length}` : ''}
           </button>
+          )}
         </div>
       </header>
 
@@ -369,6 +391,7 @@ function Meeting({ meetingId, isHost, authToken = null }: { meetingId: string; i
           admitGuest={admitGuest}
           denyGuest={denyGuest}
           onClose={() => setShowParticipants(false)}
+          asSheet={narrow}
         />
       )}
       {/* ────────────────────────────────────────────────────────────────────── */}
@@ -384,8 +407,92 @@ function Meeting({ meetingId, isHost, authToken = null }: { meetingId: string; i
         ) : (
           <RtkGrid meeting={meeting} config={config} />
         )}
-        {states.activeSidebar && <RtkSidebar meeting={meeting} states={states} />}
+        {/* Chat: beside the video on desktop, full-screen over it on a phone. */}
+        {states.activeSidebar && (narrow ? (
+          <div className="absolute inset-0 z-30 bg-slate-900">
+            <RtkSidebar meeting={meeting} states={states} />
+          </div>
+        ) : <RtkSidebar meeting={meeting} states={states} />)}
       </main>
+      {narrow && !selfVideoOn && (
+        <p className="flex items-center gap-2 mx-3 mt-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-sm text-slate-300" role="status">
+          <VideoOff size={18} className="flex-none text-teal-300" aria-hidden="true" />
+          Your camera is off. Tap Camera to share video.
+        </p>
+      )}
+      {narrow && (
+        <footer
+          className="flex items-start justify-between gap-0.5 px-2 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] w-full border-t border-slate-800"
+          aria-label="Meeting controls"
+        >
+          {/* RealtimeKit's own toggles at size "sm" (the width already proven on a
+              412px phone), with our label underneath so every control is named. */}
+          <span className="flex flex-col items-center gap-1 text-xs text-slate-300"><RtkMicToggle meeting={meeting} size="sm" />Mic</span>
+          <span className="flex flex-col items-center gap-1 text-xs text-slate-300"><RtkCameraToggle meeting={meeting} size="sm" />Camera</span>
+          <button
+            type="button"
+            onClick={() => flipCamera(meeting)}
+            className="flex flex-col items-center gap-1 text-xs text-slate-300"
+          >
+            <span className="w-12 h-12 rounded-xl bg-slate-800 grid place-items-center text-white"><SwitchCamera size={22} aria-hidden="true" /></span>
+            Flip
+          </button>
+          <span className="flex flex-col items-center gap-1 text-xs text-slate-300"><RtkChatToggle meeting={meeting} size="sm" />Chat</span>
+          <button
+            type="button"
+            onClick={() => setMoreOpen(true)}
+            className="flex flex-col items-center gap-1 text-xs text-slate-300"
+          >
+            <span className="w-12 h-12 rounded-xl bg-slate-800 grid place-items-center text-white"><MoreHorizontal size={22} aria-hidden="true" /></span>
+            More
+          </button>
+          <span className="flex flex-col items-center gap-1 text-xs text-red-300"><RtkLeaveButton size="sm" />Leave</span>
+        </footer>
+      )}
+      <BottomSheet open={narrow && moreOpen} onClose={() => { setMoreOpen(false); setEditingName(false); }} title="More">
+        <SheetAction
+          icon={<LayoutGrid size={20} />}
+          label={viewMode === 'grid' ? 'Speaker view' : 'Grid view'}
+          hint={viewMode === 'grid' ? 'big speaker, small others' : 'everyone the same size'}
+          onClick={() => { setViewMode(viewMode === 'grid' ? 'speaker' : 'grid'); setMoreOpen(false); }}
+        />
+        {editingName ? (
+          <form
+            className="flex gap-2 py-1.5"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (nameDraft.trim() && meeting) {
+                try { await (meeting as any).changeDisplayName(nameDraft.trim()); } catch {}
+              }
+              setEditingName(false);
+              setMoreOpen(false);
+            }}
+          >
+            <input
+              autoFocus
+              aria-label="Your name in the meeting"
+              className="flex-1 min-w-0 min-h-12 px-3 rounded-xl bg-slate-800 border border-slate-600 text-base text-white focus:outline-none focus:border-teal-400"
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+            />
+            <button type="submit" className="min-h-12 px-4 rounded-xl bg-teal-400 text-slate-950 font-bold">Save</button>
+          </form>
+        ) : (
+          <SheetAction
+            icon={<Pencil size={20} />}
+            label="Change my name"
+            hint={selfName || 'You'}
+            onClick={() => { setNameDraft(selfName || ''); setEditingName(true); }}
+          />
+        )}
+        <SheetAction
+          icon={<Users size={20} />}
+          label="Participants"
+          hint={isHost && waitingGuests.length > 0 ? `${waitingGuests.length} waiting` : undefined}
+          onClick={() => { setMoreOpen(false); setShowParticipants(true); }}
+        />
+      </BottomSheet>
+      {!narrow && (
       <footer className="p-2 flex items-center w-full border-t border-slate-700">
         <div className="flex flex-1">
           {/* size="sm" tells RealtimeKit's controlbar button to hide the label
@@ -576,6 +683,7 @@ function Meeting({ meetingId, isHost, authToken = null }: { meetingId: string; i
         </div>
         <div className="flex flex-1" />
       </footer>
+      )}
       {audioRec.error && (
         <div className="px-3 py-2 text-xs text-red-300 bg-red-950/60 border-t border-red-900">
           {audioRec.error}

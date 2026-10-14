@@ -1,4 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { Mic, MicOff, MoreHorizontal } from 'lucide-react';
+import BottomSheet from './BottomSheet';
 
 interface WaitingGuest {
   guest_email: string;
@@ -17,6 +19,8 @@ interface Props {
   onClose: () => void;
   /** Initial fixed position (top-right by default). */
   initialPos?: { x: number; y: number };
+  /** Phones: render as a bottom sheet with thumb-sized buttons instead of the draggable box. */
+  asSheet?: boolean;
 }
 
 interface Row {
@@ -52,6 +56,7 @@ export default function ParticipantsPanel({
   denyGuest,
   onClose,
   initialPos,
+  asSheet = false,
 }: Props) {
   const [rows, setRows] = useState<Row[]>([]);
   const [pos, setPos] = useState(
@@ -59,6 +64,8 @@ export default function ParticipantsPanel({
   );
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Sheet mode: which in-meeting row has its host actions expanded.
+  const [openRowId, setOpenRowId] = useState<string | null>(null);
 
   const refresh = () => {
     try {
@@ -158,6 +165,91 @@ export default function ParticipantsPanel({
   };
 
   const showWaitingSection = isHost && waitingGuests.length > 0;
+
+  if (asSheet) {
+    const roleOf = (r: Row) => (/host/i.test(r.presetName) ? 'Host' : /guest/i.test(r.presetName) ? 'Guest' : 'Participant');
+    return (
+      <BottomSheet open onClose={onClose} title="Participants" subtitle={`${rows.length} in the meeting`}>
+        {showWaitingSection && (
+          <section className="pb-3 mb-3 border-b border-slate-700">
+            <div className="flex items-center justify-between min-h-10">
+              <h3 className="text-sm font-bold text-amber-300">Waiting · {waitingGuests.length}</h3>
+              {waitingGuests.length > 1 && (
+                <button
+                  type="button"
+                  className="min-h-10 px-3 rounded-xl text-sm font-bold text-teal-300"
+                  onClick={() => waitingGuests.forEach((g) => admitGuest(g.guest_email))}
+                >Admit all</button>
+              )}
+            </div>
+            {waitingGuests.map((g) => (
+              <div key={g.guest_email} className="flex items-center gap-2.5 py-2">
+                <div className="w-10 h-10 flex-none rounded-full bg-amber-950 text-amber-300 grid place-items-center font-bold">
+                  {(g.guest_name || g.guest_email || '?')[0].toUpperCase()}
+                </div>
+                <span className="flex-1 min-w-0 font-semibold truncate">{g.guest_name || g.guest_email}</span>
+                <button
+                  type="button"
+                  className="min-h-11 px-3.5 rounded-xl border border-slate-600 font-semibold"
+                  onClick={() => denyGuest(g.guest_email)}
+                >Deny</button>
+                <button
+                  type="button"
+                  className="min-h-11 px-4 rounded-xl bg-teal-400 text-slate-950 font-bold"
+                  onClick={() => admitGuest(g.guest_email)}
+                >Admit</button>
+              </div>
+            ))}
+          </section>
+        )}
+
+        <h3 className="text-sm font-bold text-slate-400 mb-1">In meeting · {rows.length}</h3>
+        {rows.length === 0 && <p className="text-slate-400 text-sm py-4">No participants yet</p>}
+        {rows.map((r) => {
+          const busy = busyId === r.id;
+          const rowIsHost = /host/i.test(r.presetName);
+          const canAct = isHost && !rowIsHost;
+          return (
+            <div key={r.id} className="py-1">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 flex-none rounded-full bg-slate-700 grid place-items-center font-bold">
+                  {(r.name || '?')[0].toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold truncate">{r.name}</p>
+                  <p className="text-[13px] text-slate-400">{roleOf(r)}{r.videoEnabled ? ' · camera on' : ''}</p>
+                </div>
+                <span className={r.audioEnabled ? 'text-teal-300' : 'text-slate-500'} role="img" aria-label={r.audioEnabled ? 'Microphone on' : 'Microphone off'}>
+                  {r.audioEnabled ? <Mic size={20} /> : <MicOff size={20} />}
+                </span>
+                {canAct && (
+                  <button
+                    type="button"
+                    aria-label={`Actions for ${r.name}`}
+                    aria-expanded={openRowId === r.id}
+                    onClick={() => setOpenRowId(openRowId === r.id ? null : r.id)}
+                    className="w-11 h-11 flex-none grid place-items-center rounded-xl text-slate-400 active:bg-slate-800"
+                  >
+                    <MoreHorizontal size={22} />
+                  </button>
+                )}
+              </div>
+              {canAct && openRowId === r.id && (
+                <div className="flex gap-2 pl-[50px] pt-2 pb-1">
+                  <button type="button" disabled={busy || !r.audioEnabled} onClick={() => muteAudio(r.id)}
+                    className="flex-1 min-h-11 rounded-xl bg-slate-800 text-sm font-semibold disabled:opacity-40">Mute</button>
+                  <button type="button" disabled={busy || !r.videoEnabled} onClick={() => stopVideo(r.id)}
+                    className="flex-1 min-h-11 rounded-xl bg-slate-800 text-sm font-semibold disabled:opacity-40">Stop video</button>
+                  <button type="button" disabled={busy} onClick={() => kick(r.id, r.name)}
+                    className="flex-1 min-h-11 rounded-xl bg-red-950 text-red-200 text-sm font-semibold disabled:opacity-40">To waiting</button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </BottomSheet>
+    );
+  }
 
   return (
     <div

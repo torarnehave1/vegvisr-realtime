@@ -12,6 +12,7 @@ import { SpeakerView } from './SpeakerView';
 import { DuoView } from './DuoView';
 import { config } from '../lib/rtkConfig';
 import { useMeetingSession, type ViewMode } from '../hooks/useMeetingSession';
+import { flipCamera as flipCameraOf } from '../lib/flipCamera';
 
 const VIEW_ORDER: ViewMode[] = ['grid', 'speaker', 'duo'];
 const VIEW_LABEL: Record<ViewMode, string> = {
@@ -117,19 +118,8 @@ export function MobileMeeting({
     }
   };
 
-  // ── Flip camera (front/rear) ───────────────────────────────────────────────
-  const flipCamera = useCallback(async () => {
-    if (!meeting?.self) return;
-    try {
-      const devices: MediaDeviceInfo[] = await meeting.self.getVideoDevices();
-      if (!devices || devices.length < 2) return;
-      const current = meeting.self.videoTrack?.getSettings?.()?.deviceId;
-      const next = devices.find((d) => d.deviceId !== current) || devices[0];
-      await meeting.self.setDevice(next);
-    } catch (err) {
-      console.error('Flip camera failed:', err);
-    }
-  }, [meeting]);
+  // ── Flip camera (front/rear) ── shared with the phone footer in Meeting
+  const flipCamera = useCallback(() => flipCameraOf(meeting), [meeting]);
 
   if (!meeting) return <RtkSpinner />;
 
