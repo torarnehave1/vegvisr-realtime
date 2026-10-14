@@ -4466,7 +4466,10 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   if (authStatus === 'authed') {
     return (
       <AuthContext.Provider value={authUser}>
-        <div className="flex flex-col h-screen bg-slate-950 text-white">
+        <div className="flex flex-col h-screen supports-[height:100dvh]:h-dvh bg-slate-950 text-white">
+          {/* Height is the *visible* viewport (dvh), not 100vh: on Android Chrome
+              100vh includes the area behind the URL bar, which pushed the meeting
+              controls (mic / camera / leave) below the bottom of the screen. */}
           {/* Slim top bar: logo + screen-record on the left, user / log-out on
               the right. EcosystemNav menu removed; logo moved here so the lobby
               no longer needs its own banner. */}
@@ -4521,7 +4524,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     if (slugUrlMatch) {
       return (
         <AuthContext.Provider value={null}>
-          <div className="flex flex-col h-screen bg-slate-950 text-white">
+          <div className="flex flex-col h-screen supports-[height:100dvh]:h-dvh bg-slate-950 text-white">
             <div className="flex-1 min-h-0">{children}</div>
           </div>
         </AuthContext.Provider>
@@ -4534,7 +4537,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   if (slugUrlMatch) {
     return (
       <AuthContext.Provider value={null}>
-        <div className="flex flex-col h-screen bg-slate-950 text-white">
+        <div className="flex flex-col h-screen supports-[height:100dvh]:h-dvh bg-slate-950 text-white">
           <div className="flex-1 min-h-0">{children}</div>
         </div>
       </AuthContext.Provider>
@@ -4557,7 +4560,7 @@ export default function App() {
   const isEmbedMode = new URL(window.location.href).searchParams.get('embed') === '1';
   if (isEmbedMode) {
     return (
-      <div className="flex flex-col h-screen bg-slate-950 text-white">
+      <div className="flex flex-col h-screen supports-[height:100dvh]:h-dvh bg-slate-950 text-white">
         <RealtimeMeeting />
       </div>
     );
