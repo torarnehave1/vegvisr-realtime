@@ -43,6 +43,9 @@ import { useMeetingSession } from './hooks/useMeetingSession';
 import { config } from './lib/rtkConfig';
 import { MobileMeeting } from './components/MobileMeeting';
 import { useIsMobile } from './hooks/useIsMobile';
+import BottomSheet from './components/BottomSheet';
+import { Home, Users, LayoutGrid, MoreHorizontal, Video, Link2, PlayCircle, Pencil, RefreshCw, Play, Square, FileText, Download, Music, Tag, Type, Trash2, Upload, Mic, CloudDownload } from 'lucide-react';
+import { SheetAction } from './components/BottomSheet';
 
 const MAGIC_BASE = 'https://cookie.vegvisr.org';
 const DASHBOARD_BASE = 'https://dashboard.vegvisr.org';
@@ -707,6 +710,13 @@ function RealtimeMeeting() {
   const [audioFormatMenuPos, setAudioFormatMenuPos] = useState<{ top: number; right: number } | null>(null);
   const [audioFormatMenuRec, setAudioFormatMenuRec] = useState<any | null>(null);
   const [lobbyTab, setLobbyTab] = useState<'meetings' | 'recordings' | 'slugs'>('meetings');
+  // Mobile lobby sheets: room settings (by room id) and the invite link/email panel.
+  const [roomSheetId, setRoomSheetId] = useState<string | null>(null);
+  const [inviteSheetOpen, setInviteSheetOpen] = useState(false);
+  // Mobile recordings: per-recording action sheet, the tools sheet, and a two-tap delete guard.
+  const [recSheetKey, setRecSheetKey] = useState<string | null>(null);
+  const [recToolsOpen, setRecToolsOpen] = useState(false);
+  const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
   const [playingKey, setPlayingKey] = useState<string | null>(null);
   const [showAudioRecorder, setShowAudioRecorder] = useState(false);
   const [copiedTranscript, setCopiedTranscript] = useState<string | null>(null);
@@ -2709,96 +2719,14 @@ function RealtimeMeeting() {
     );
   }
 
-  if (noParams) {
-    return (
-      <div className="flex flex-col h-full">
-        {/* Logo banner removed — the AuthGate's slim top bar now shows a small
-            logo next to ScreenRecorder, so the lobby starts directly with the
-            impersonation banner / lobby content. */}
-
-        {/* System Owner "Login as…" control + impersonation banner */}
-        <ImpersonationBar />
-
-        {/* Tab navigation */}
-        <div className="flex border-b border-slate-700">
-          <button
-            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${lobbyTab === 'meetings' ? 'text-white border-b-2 border-sky-500 bg-slate-800/50' : 'text-slate-400 hover:text-white'}`}
-            onClick={() => setLobbyTab('meetings')}
-          >
-            📞 Meetings
-          </button>
-          <button
-            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${lobbyTab === 'recordings' ? 'text-white border-b-2 border-purple-500 bg-slate-800/50' : 'text-slate-400 hover:text-white'}`}
-            onClick={() => { setLobbyTab('recordings'); if (recordings.length === 0) fetchRecordings(); }}
-          >
-            🎬 Recordings {recordings.length > 0 && <span className="ml-1 text-xs bg-slate-700 rounded-full px-1.5">{recordings.length}</span>}
-          </button>
-          {canRoleManageMeetings(readStoredUser()?.role) && (
-            <button
-              className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${lobbyTab === 'slugs' ? 'text-white border-b-2 border-emerald-500 bg-slate-800/50' : 'text-slate-400 hover:text-white'}`}
-              onClick={() => setLobbyTab('slugs')}
-            >
-              🔗 Room Slugs
-            </button>
-          )}
-        </div>
-
-        {/* ─── Meetings Tab ─── */}
-        {lobbyTab === 'meetings' && (
-        <div className="flex flex-col items-center justify-center flex-1 gap-6 p-8 overflow-y-auto">
-        <div className="text-center mb-2">
-          <h1 className="text-2xl font-semibold text-white mb-1">Meetings</h1>
-          <p className="text-slate-400 text-sm">Create a new meeting or join an existing one.</p>
-        </div>
-
-        {/* Display name */}
-        <div className="w-full max-w-sm">
-          <label className="block text-xs text-slate-400 mb-1">Your name</label>
-          <input
-            type="text"
-            className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:border-sky-500"
-            placeholder="Enter your name"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-          />
-        </div>
-
-        {/* Standard Rooms — Admin/Superadmin only */}
-        {hasStandardRooms && (
-          <div className="flex flex-col gap-2 w-full max-w-sm">
-            {standardRooms.map((room, index) => (
-              <React.Fragment key={room.id}>
-              <div className="flex items-center gap-2">
-                <button
-                  className={`flex-1 px-4 py-3 rounded-lg text-white font-medium disabled:opacity-40 text-left ${getRoomButtonClass(room, index)}`}
-                  disabled={joining}
-                  onClick={() => {
-                    setInviteLink(`${window.location.origin}/?meetingId=${room.id}`);
-                    setCopied(false);
-                    fetchTokenAndJoin(room.id, 'group_call_host');
-                  }}
-                >
-                  <span className="block text-sm">{joining ? 'Joining…' : getRoomLabel(room, index)}</span>
-                  {roomTitles[room.id] && <span className={`block text-xs mt-0.5 ${getRoomSubtitleClass(room, index)}`}>{roomTitles[room.id]}</span>}
-                </button>
-                {canCreateMeetings && (
-                  <button
-                    className="px-2 py-2 text-slate-400 hover:text-white text-sm"
-                    title="Rename room"
-                    onClick={() => {
-                      setEditingRoomTitle(room.id);
-                      setRoomTitleDraft(roomTitles[room.id] || '');
-                    }}
-                  >
-                    ✏️
-                  </button>
-                )}
-              </div>
-              {canCreateMeetings && editingRoomTitle === room.id && (
+  // ── Lobby room settings ─────────────────────────────────────────────────
+  // Rendered inline on desktop and inside the mobile room/invite sheets, so
+  // both layouts drive the same state and handlers.
+  const renderRenameRoom = (room: StandardRoom) => (
               <div className="flex gap-2">
                 <input
                   type="text"
-                  className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-sky-500"
+                  className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-white text-sm max-md:text-base focus:outline-none focus:border-sky-500"
                   placeholder="Room title"
                   value={roomTitleDraft}
                   onChange={(e) => setRoomTitleDraft(e.target.value)}
@@ -2819,22 +2747,23 @@ function RealtimeMeeting() {
                   ✕
                 </button>
               </div>
-              )}
-              {canCreateMeetings && (
+  );
+
+  const renderOpenRoomSettings = (room: StandardRoom) => (
               <div className="flex flex-col gap-1.5 bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <span className="text-xs text-slate-200">🔓 Open room</span>
-                    <p className="text-[10px] text-slate-500 mt-0.5">Anyone with the link joins as a guest — no login</p>
+                    <p className="text-[10px] max-md:text-xs text-slate-500 mt-0.5">Anyone with the link joins as a guest — no login</p>
                   </div>
                   <button
-                    className={`relative shrink-0 w-10 h-5 rounded-full transition-colors ${openRooms[room.id] ? 'bg-emerald-600' : 'bg-slate-600'} disabled:opacity-40`}
+                    className={`relative shrink-0 w-10 h-5 rounded-full transition-colors max-md:before:content-[''] max-md:before:absolute max-md:before:-inset-3 ${openRooms[room.id] ? 'bg-emerald-600' : 'bg-slate-600'} disabled:opacity-40`}
                     disabled={togglingOpenRoom === room.id}
                     onClick={() => toggleOpenRoom(room.id, !openRooms[room.id])}
                     title={openRooms[room.id] ? 'Close this room to guests' : 'Open this room to guests'}
                     aria-pressed={!!openRooms[room.id]}
                   >
-                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${openRooms[room.id] ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                    <span className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${openRooms[room.id] ? 'translate-x-5' : 'translate-x-0.5'}`} />
                   </button>
                 </div>
                 {openRooms[room.id] && (
@@ -2859,7 +2788,7 @@ function RealtimeMeeting() {
                       </button>
                     </div>
                     {canSetDefaultOpenRoom && (
-                      <label className="flex items-center gap-2 text-[11px] text-slate-400">
+                      <label className="flex items-center gap-2 text-[11px] max-md:text-sm text-slate-400">
                         <input
                           type="checkbox"
                           checked={openRooms[room.id].isDefault}
@@ -2875,45 +2804,26 @@ function RealtimeMeeting() {
                   <p className="text-[11px] text-red-400">{openRoomToggleError.message}</p>
                 )}
               </div>
-              )}
-              </React.Fragment>
-            ))}
-          </div>
-        )}
+  );
 
-        {canCreateMeetings && (
-          <button
-            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-white text-sm w-full max-w-sm disabled:opacity-40"
-            disabled={provisioningRooms}
-            onClick={provisionRooms}
-          >
-            {provisioningRooms
-              ? 'Setting up…'
-              : hasStandardRooms
-                ? '➕ Add Standard Room'
-                : '🔧 Set Up My Standard Rooms'}
-          </button>
-        )}
-
-        {/* Waiting Room & Screen Settings — Admin/Superadmin only */}
-        {canCreateMeetings && hasStandardRooms && (
-          <div className="w-full max-w-sm flex flex-col gap-2">
+  const renderWaitingRoomSettings = () => (
+    <>
             {/* Waiting Room Toggle */}
             <div className="flex items-center justify-between bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2.5">
               <div className="flex items-center gap-2">
                 <span className="text-sm">🖐</span>
                 <div>
                   <span className="text-sm text-slate-200">Waiting Room</span>
-                  <p className="text-[10px] text-slate-500 mt-0.5">Approve guests before they join</p>
+                  <p className="text-[10px] max-md:text-xs text-slate-500 mt-0.5">Approve guests before they join</p>
                 </div>
               </div>
               <button
-                className={`relative w-10 h-5 rounded-full transition-colors ${waitingRoomEnabled ? 'bg-emerald-600' : 'bg-slate-600'} disabled:opacity-40`}
+                className={`relative w-10 h-5 rounded-full transition-colors max-md:before:content-[''] max-md:before:absolute max-md:before:-inset-3 ${waitingRoomEnabled ? 'bg-emerald-600' : 'bg-slate-600'} disabled:opacity-40`}
                 disabled={togglingWaitingRoom}
                 onClick={toggleWaitingRoom}
                 title={waitingRoomEnabled ? 'Disable waiting room' : 'Enable waiting room'}
               >
-                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${waitingRoomEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                <span className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${waitingRoomEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
               </button>
             </div>
             {waitingRoomEnabled && (
@@ -2943,7 +2853,7 @@ function RealtimeMeeting() {
                   <label className="text-xs text-slate-400 block mb-1">Title</label>
                   <input
                     type="text"
-                    className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-sky-500"
+                    className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-white text-sm max-md:text-base focus:outline-none focus:border-sky-500"
                     placeholder="e.g. Welcome to my meeting"
                     value={waitingTitle}
                     onChange={(e) => setWaitingTitle(e.target.value)}
@@ -2953,7 +2863,7 @@ function RealtimeMeeting() {
                   <label className="text-xs text-slate-400 block mb-1">Image URL</label>
                   <input
                     type="url"
-                    className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-sky-500"
+                    className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-white text-sm max-md:text-base focus:outline-none focus:border-sky-500"
                     placeholder="https://example.com/my-logo.png"
                     value={waitingImage}
                     onChange={(e) => setWaitingImage(e.target.value)}
@@ -2962,7 +2872,7 @@ function RealtimeMeeting() {
                 {/* Preview */}
                 {(waitingTitle || waitingImage) && (
                   <div className="flex flex-col items-center gap-2 bg-slate-900 rounded-lg p-4 border border-slate-700">
-                    <p className="text-[10px] text-slate-500 mb-1">Preview</p>
+                    <p className="text-[10px] max-md:text-xs text-slate-500 mb-1">Preview</p>
                     {waitingImage && (
                       <img
                         src={waitingImage}
@@ -2972,7 +2882,7 @@ function RealtimeMeeting() {
                       />
                     )}
                     {waitingTitle && <p className="text-sm font-medium text-slate-200">{waitingTitle}</p>}
-                    <p className="text-[10px] text-slate-500">Hosted by {displayName || 'you'}</p>
+                    <p className="text-[10px] max-md:text-xs text-slate-500">Hosted by {displayName || 'you'}</p>
                   </div>
                 )}
                 <div className="flex gap-2 justify-end">
@@ -2992,22 +2902,10 @@ function RealtimeMeeting() {
                 </div>
               </div>
             )}
-          </div>
-        )}
+    </>
+  );
 
-        {/* Create Meeting — Admin/Superadmin only */}
-        {canCreateMeetings && (
-          <button
-            className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-white font-medium disabled:opacity-40 w-full max-w-sm"
-            disabled={joining}
-            onClick={createMeeting}
-          >
-            {joining && !manualMeetingId.trim() ? 'Creating…' : '+ Create Meeting'}
-          </button>
-        )}
-
-        {/* Invite link (shown after creating) */}
-        {inviteLink && (
+  const renderInvitePanel = () => (
           <div className="flex flex-col gap-2 w-full max-w-sm bg-slate-800 border border-slate-600 rounded-lg p-3">
             <p className="text-xs text-slate-400">Share this link to invite others:</p>
             <div className="flex gap-2 items-center">
@@ -3015,8 +2913,8 @@ function RealtimeMeeting() {
                 type="text"
                 readOnly
                 aria-label="Invite link"
-                value={inviteLink}
-                className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-xs font-mono focus:outline-none select-all"
+                value={inviteLink ?? ''}
+                className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-xs max-md:text-sm font-mono focus:outline-none select-all"
                 onFocus={(e) => e.target.select()}
               />
               <button
@@ -3032,7 +2930,7 @@ function RealtimeMeeting() {
               <div className="flex gap-2">
                 <input
                   type="email"
-                  className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-xs placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                  className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-xs max-md:text-base placeholder-slate-500 focus:outline-none focus:border-emerald-500"
                   placeholder="guest@example.com"
                   value={inviteEmail}
                   onChange={(e) => setInviteEmail(e.target.value)}
@@ -3049,7 +2947,233 @@ function RealtimeMeeting() {
               {inviteError && <p className="text-xs text-red-400">{inviteError}</p>}
             </div>
           </div>
+  );
+
+  // What a recording supports — one source for the desktop button row and the
+  // mobile action sheet, so the two can't drift apart.
+  const recordingCaps = (rec: any) => {
+    const canManage = canRoleManageMeetings(readStoredUser()?.role);
+    return {
+      canManage,
+      hasFile: rec.source !== 'realtimekit' || !!rec.download_url,
+      canShare: canManage && rec.source !== 'realtimekit',
+      canEditMeta: canManage && (rec.source === 'r2' || rec.source === 'r2-own'),
+    };
+  };
+
+  // Short in-progress status for a recording, shown on the mobile row because
+  // the desktop buttons that carry it are hidden on phones.
+  const recordingStatus = (rec: any): string | null => {
+    if (deletingKey === rec.key) return 'Deleting…';
+    if (transcribingKey === rec.key) return transcribeProgress ? `Transcribing ${transcribeProgress.current}/${transcribeProgress.total}…` : 'Transcribing…';
+    if (extractingAudioKey === rec.key) return 'Preparing audio…';
+    if (sharingKey === rec.key) return 'Creating link…';
+    if (copiedShareKey === rec.key) return 'Link copied';
+    return null;
+  };
+
+  // Room label without its leading emoji, for the mobile cards and sheets.
+  const plainRoomLabel = (room: StandardRoom, index: number) => getRoomLabel(room, index).replace(/^\S+\s/, '');
+
+  if (noParams) {
+    return (
+      <div className="flex flex-col h-full">
+        {/* Logo banner removed — the AuthGate's slim top bar now shows a small
+            logo next to ScreenRecorder, so the lobby starts directly with the
+            impersonation banner / lobby content. */}
+
+        {/* System Owner "Login as…" control + impersonation banner */}
+        <ImpersonationBar />
+
+        {/* Tab navigation — desktop; phones use the bottom bar below */}
+        <div className="hidden md:flex border-b border-slate-700">
+          <button
+            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${lobbyTab === 'meetings' ? 'text-white border-b-2 border-sky-500 bg-slate-800/50' : 'text-slate-400 hover:text-white'}`}
+            onClick={() => setLobbyTab('meetings')}
+          >
+            📞 Meetings
+          </button>
+          <button
+            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${lobbyTab === 'recordings' ? 'text-white border-b-2 border-purple-500 bg-slate-800/50' : 'text-slate-400 hover:text-white'}`}
+            onClick={() => { setLobbyTab('recordings'); if (recordings.length === 0) fetchRecordings(); }}
+          >
+            🎬 Recordings {recordings.length > 0 && <span className="ml-1 text-xs bg-slate-700 rounded-full px-1.5">{recordings.length}</span>}
+          </button>
+          {canRoleManageMeetings(readStoredUser()?.role) && (
+            <button
+              className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${lobbyTab === 'slugs' ? 'text-white border-b-2 border-emerald-500 bg-slate-800/50' : 'text-slate-400 hover:text-white'}`}
+              onClick={() => setLobbyTab('slugs')}
+            >
+              🔗 Room Slugs
+            </button>
+          )}
+        </div>
+
+        {/* ─── Meetings Tab ─── */}
+        {lobbyTab === 'meetings' && (
+        <div className="flex flex-col items-center md:justify-center flex-1 gap-4 md:gap-6 p-4 md:p-8 overflow-y-auto">
+        <div className="hidden md:block text-center mb-2">
+          <h1 className="text-2xl font-semibold text-white mb-1">Meetings</h1>
+          <p className="text-slate-400 text-sm">Create a new meeting or join an existing one.</p>
+        </div>
+
+        {/* Display name */}
+        <div className="w-full md:max-w-sm">
+          <label className="block text-xs max-md:text-sm max-md:font-semibold text-slate-400 mb-1">Your name</label>
+          <input
+            type="text"
+            className="w-full bg-slate-800 border border-slate-600 rounded max-md:rounded-xl px-3 py-2 max-md:min-h-12 text-white text-sm max-md:text-base placeholder-slate-500 focus:outline-none focus:border-sky-500"
+            placeholder="Enter your name"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+          />
+        </div>
+
+        {/* Standard Rooms — Admin/Superadmin only */}
+        {hasStandardRooms && (
+          <div className="hidden md:flex flex-col gap-2 w-full max-w-sm">
+            {standardRooms.map((room, index) => (
+              <React.Fragment key={room.id}>
+              <div className="flex items-center gap-2">
+                <button
+                  className={`flex-1 px-4 py-3 rounded-lg text-white font-medium disabled:opacity-40 text-left ${getRoomButtonClass(room, index)}`}
+                  disabled={joining}
+                  onClick={() => {
+                    setInviteLink(`${window.location.origin}/?meetingId=${room.id}`);
+                    setCopied(false);
+                    fetchTokenAndJoin(room.id, 'group_call_host');
+                  }}
+                >
+                  <span className="block text-sm">{joining ? 'Joining…' : getRoomLabel(room, index)}</span>
+                  {roomTitles[room.id] && <span className={`block text-xs mt-0.5 ${getRoomSubtitleClass(room, index)}`}>{roomTitles[room.id]}</span>}
+                </button>
+                {canCreateMeetings && (
+                  <button
+                    className="px-2 py-2 text-slate-400 hover:text-white text-sm"
+                    title="Rename room"
+                    onClick={() => {
+                      setEditingRoomTitle(room.id);
+                      setRoomTitleDraft(roomTitles[room.id] || '');
+                    }}
+                  >
+                    ✏️
+                  </button>
+                )}
+              </div>
+              {canCreateMeetings && editingRoomTitle === room.id && renderRenameRoom(room)}
+              {canCreateMeetings && renderOpenRoomSettings(room)}
+              </React.Fragment>
+            ))}
+          </div>
         )}
+
+        {/* Mobile room cards — Start / Invite up front, settings in a sheet */}
+        {hasStandardRooms && (
+          <div className="md:hidden flex flex-col gap-3 w-full">
+            {standardRooms.map((room, index) => {
+              const label = plainRoomLabel(room, index);
+              const RoomIcon = room.kind === 'personal' ? Home : room.kind === 'team' ? Users : LayoutGrid;
+              const tone = room.kind === 'personal'
+                ? 'bg-violet-950 text-violet-300'
+                : room.kind === 'team' ? 'bg-indigo-950 text-indigo-300' : 'bg-cyan-950 text-cyan-300';
+              return (
+                <article key={room.id} className="flex flex-col gap-3 p-3.5 bg-slate-900 border border-slate-700 rounded-2xl">
+                  <div className="flex items-center gap-3">
+                    <span className={`w-11 h-11 flex-none grid place-items-center rounded-xl ${tone}`} aria-hidden="true">
+                      <RoomIcon size={22} />
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[17px] font-bold text-white truncate">{label}</p>
+                      {roomTitles[room.id] && <p className="text-sm text-slate-400 truncate">{roomTitles[room.id]}</p>}
+                    </div>
+                    {canCreateMeetings && (
+                      <button
+                        type="button"
+                        aria-label={`${label} settings`}
+                        onClick={() => { setEditingRoomTitle(null); setRoomSheetId(room.id); }}
+                        className="w-11 h-11 flex-none grid place-items-center rounded-xl text-slate-400 active:bg-slate-800"
+                      >
+                        <MoreHorizontal size={22} />
+                      </button>
+                    )}
+                  </div>
+                  {(openRooms[room.id] || waitingRoomEnabled) && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {openRooms[room.id] && (
+                        <span className="text-[13px] font-semibold px-2.5 py-0.5 rounded-full bg-teal-950 text-teal-300">Open room · no login</span>
+                      )}
+                      {waitingRoomEnabled && (
+                        <span className="text-[13px] font-semibold px-2.5 py-0.5 rounded-full bg-amber-950 text-amber-300">Waiting room on</span>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="flex-1 min-h-12 rounded-xl bg-teal-400 text-slate-950 text-base font-bold flex items-center justify-center gap-2 disabled:opacity-40"
+                      disabled={joining}
+                      onClick={() => {
+                        setInviteLink(`${window.location.origin}/?meetingId=${room.id}`);
+                        setCopied(false);
+                        fetchTokenAndJoin(room.id, 'group_call_host');
+                      }}
+                    >
+                      <Video size={20} aria-hidden="true" />
+                      {joining ? 'Joining…' : 'Start'}
+                    </button>
+                    <button
+                      type="button"
+                      className="min-h-12 px-4 rounded-xl border border-slate-600 text-white font-semibold flex items-center gap-2"
+                      onClick={() => {
+                        setInviteLink(`${window.location.origin}/?meetingId=${room.id}`);
+                        setCopied(false);
+                        setInviteSheetOpen(true);
+                      }}
+                    >
+                      <Link2 size={20} aria-hidden="true" />
+                      Invite
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+
+        {canCreateMeetings && (
+          <button
+            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-white text-sm w-full max-w-sm disabled:opacity-40"
+            disabled={provisioningRooms}
+            onClick={provisionRooms}
+          >
+            {provisioningRooms
+              ? 'Setting up…'
+              : hasStandardRooms
+                ? '➕ Add Standard Room'
+                : '🔧 Set Up My Standard Rooms'}
+          </button>
+        )}
+
+        {/* Waiting Room & Screen Settings — Admin/Superadmin only */}
+        {canCreateMeetings && hasStandardRooms && (
+          <div className="hidden md:flex w-full max-w-sm flex-col gap-2">
+            {renderWaitingRoomSettings()}
+          </div>
+        )}
+
+        {/* Create Meeting — Admin/Superadmin only */}
+        {canCreateMeetings && (
+          <button
+            className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-white font-medium disabled:opacity-40 w-full max-w-sm"
+            disabled={joining}
+            onClick={createMeeting}
+          >
+            {joining && !manualMeetingId.trim() ? 'Creating…' : '+ Create Meeting'}
+          </button>
+        )}
+
+        {/* Invite link (shown after creating) */}
+        {inviteLink && !inviteSheetOpen && renderInvitePanel()}
 
         {/* Divider */}
         <div className="flex items-center w-full max-w-sm gap-3">
@@ -3062,14 +3186,15 @@ function RealtimeMeeting() {
         <div className="flex gap-2 w-full max-w-sm">
           <input
             type="text"
-            className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:border-sky-500"
+            className="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded max-md:rounded-xl px-3 py-2 max-md:min-h-12 text-white text-sm max-md:text-base placeholder-slate-500 focus:outline-none focus:border-sky-500"
             placeholder="Meeting ID"
+            aria-label="Meeting ID"
             value={manualMeetingId}
             onChange={(e) => setManualMeetingId(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && manualMeetingId.trim() && !joining && joinByMeetingId(manualMeetingId.trim())}
           />
           <button
-            className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded text-white text-sm disabled:opacity-40"
+            className="px-4 py-2 max-md:min-h-12 max-md:px-5 bg-sky-600 hover:bg-sky-500 rounded max-md:rounded-xl text-white text-sm max-md:text-base max-md:font-semibold disabled:opacity-40"
             disabled={!manualMeetingId.trim() || joining}
             onClick={() => joinByMeetingId(manualMeetingId.trim())}
           >
@@ -3139,24 +3264,47 @@ function RealtimeMeeting() {
         {lobbyTab === 'recordings' && (
         <div className="flex-1 overflow-y-auto p-4">
           <div className="max-w-4xl mx-auto">
+            {/* File picker for "Upload video" — outside the desktop button row so the
+                mobile tools sheet can open it too (that row is hidden on phones). */}
+            <input
+              ref={recordingUploadInputRef}
+              type="file"
+              accept="video/*"
+              className="hidden"
+              aria-hidden="true"
+              tabIndex={-1}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) uploadRecordingToR2(file);
+              }}
+            />
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h1 className="text-xl font-semibold text-white">Recordings</h1>
-                <p className="text-slate-400 text-sm">Play, transcribe and manage your meeting recordings.</p>
+                <p className="hidden md:block text-slate-400 text-sm">Play, transcribe and manage your meeting recordings.</p>
               </div>
-              <div className="flex gap-2">
+              <div className="md:hidden flex gap-1">
+                <button
+                  type="button"
+                  aria-label="Refresh recordings"
+                  disabled={loadingRecordings}
+                  onClick={fetchRecordings}
+                  className="w-11 h-11 grid place-items-center rounded-xl text-slate-300 active:bg-slate-800 disabled:opacity-40"
+                >
+                  <RefreshCw size={20} className={loadingRecordings ? 'animate-spin' : ''} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Upload, record audio and sync"
+                  onClick={() => setRecToolsOpen(true)}
+                  className="w-11 h-11 grid place-items-center rounded-xl text-slate-300 active:bg-slate-800"
+                >
+                  <MoreHorizontal size={22} aria-hidden="true" />
+                </button>
+              </div>
+              <div className="hidden md:flex gap-2">
                 {canRoleManageMeetings(readStoredUser()?.role) && (
                   <>
-                    <input
-                      ref={recordingUploadInputRef}
-                      type="file"
-                      accept="video/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) uploadRecordingToR2(file);
-                      }}
-                    />
                     <button
                       className="px-3 py-2 bg-emerald-700 hover:bg-emerald-600 rounded text-white text-xs disabled:opacity-40"
                       disabled={uploadingRecording}
@@ -3221,7 +3369,8 @@ function RealtimeMeeting() {
                 value={recordingsSearch}
                 onChange={(e) => setRecordingsSearch(e.target.value)}
                 placeholder="Search portfolio by title, label, owner or filename"
-                className="w-full md:max-w-sm bg-slate-800 border border-slate-700 rounded px-3 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:border-sky-500"
+                aria-label="Search recordings"
+                className="w-full md:max-w-sm bg-slate-800 border border-slate-700 rounded max-md:rounded-xl px-3 py-2 max-md:min-h-12 text-white text-sm max-md:text-base placeholder-slate-500 focus:outline-none focus:border-sky-500"
               />
               <div className="flex items-center justify-end gap-2">
               <label htmlFor="recordings-sort" className="text-slate-400 text-xs">Sort by:</label>
@@ -3230,7 +3379,7 @@ function RealtimeMeeting() {
                 title="Sort recordings"
                 value={recordingsSort}
                 onChange={(e) => setRecordingsSort(e.target.value as typeof recordingsSort)}
-                className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-white text-xs focus:outline-none focus:border-sky-500"
+                className="bg-slate-800 border border-slate-700 rounded max-md:rounded-xl px-2 py-1 max-md:min-h-11 max-md:px-3 text-white text-xs max-md:text-sm focus:outline-none focus:border-sky-500"
               >
                 <option value="date-desc">Date (newest first)</option>
                 <option value="date-asc">Date (oldest first)</option>
@@ -3338,7 +3487,9 @@ function RealtimeMeeting() {
                 });
               })().map((rec: any) => {
                 // Admin + Superadmin may manage their own recordings (rename / edit / delete).
-                const canManageRecs = canRoleManageMeetings(readStoredUser()?.role);
+                const caps = recordingCaps(rec);
+                const canManageRecs = caps.canManage;
+                const status = recordingStatus(rec);
                 const sizeStr = rec.size > 1024 * 1024
                   ? `${(rec.size / (1024 * 1024)).toFixed(1)} MB`
                   : `${(rec.size / 1024).toFixed(0)} KB`;
@@ -3351,9 +3502,47 @@ function RealtimeMeeting() {
                 const hasThumbnail = !!rec.thumbnailUrl;
 
                 return (
-                  <div key={rec.key} className="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
-                    {/* Player / thumbnail area — audio renders as a waveform, video as a <video>. */}
-                    <div className={`relative ${isAudio ? 'bg-slate-900' : 'bg-black'}`}>
+                  <div key={rec.key} className="bg-slate-800 max-md:bg-slate-900 border border-slate-700 rounded-lg max-md:rounded-2xl overflow-hidden">
+                    {/* Mobile row: tap the thumbnail to play, ⋯ for everything else */}
+                    <div className="md:hidden flex items-center gap-3 py-2.5 pl-2.5 pr-1">
+                      <button
+                        type="button"
+                        aria-label={isPlaying ? 'Close player' : `Play ${displayTitle}`}
+                        onClick={() => setPlayingKey(isPlaying ? null : rec.key)}
+                        className={`relative w-[104px] h-16 flex-none rounded-[10px] overflow-hidden grid place-items-center ${isAudio ? 'bg-purple-950' : 'bg-slate-800'}`}
+                      >
+                        {hasThumbnail && <img src={rec.thumbnailUrl} alt="" className="absolute inset-0 w-full h-full object-cover opacity-70" />}
+                        <span className="relative w-9 h-9 rounded-full bg-slate-950/75 grid place-items-center text-white">
+                          {isPlaying ? <Square size={14} fill="currentColor" aria-hidden="true" /> : isAudio ? <Mic size={16} aria-hidden="true" /> : <Play size={16} fill="currentColor" aria-hidden="true" />}
+                        </span>
+                        {rec.duration != null && (
+                          <span className="absolute right-1.5 bottom-1 px-1 rounded bg-slate-950/80 font-mono text-[11px] text-white">
+                            {Math.floor(rec.duration / 60)}:{String(Math.floor(rec.duration % 60)).padStart(2, '0')}
+                          </span>
+                        )}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[15px] font-semibold leading-snug text-white line-clamp-2">{displayTitle}</p>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-[13px] text-slate-400">
+                          {rec.uploaded && <span>{new Date(rec.uploaded).toLocaleDateString()}</span>}
+                          <span className={`text-xs font-semibold px-2 rounded-full ${isAudio ? 'bg-purple-950 text-purple-200' : 'bg-indigo-950 text-indigo-200'}`}>{isAudio ? 'Audio' : 'Video'}</span>
+                          {rec.source === 'realtimekit' && <span className="text-xs font-semibold px-2 rounded-full bg-amber-950 text-amber-300">Cloud</span>}
+                          {rec.error && <span className="text-red-300">R2 failed</span>}
+                        </div>
+                        {status && <p className="text-[13px] text-teal-300 mt-0.5" role="status">{status}</p>}
+                      </div>
+                      <button
+                        type="button"
+                        aria-label={`Actions for ${displayTitle}`}
+                        onClick={() => { setConfirmDeleteKey(null); setRecSheetKey(rec.key); }}
+                        className="w-11 h-11 flex-none grid place-items-center rounded-xl text-slate-400 active:bg-slate-800"
+                      >
+                        <MoreHorizontal size={22} aria-hidden="true" />
+                      </button>
+                    </div>
+                    {/* Player / thumbnail area — audio renders as a waveform, video as a <video>.
+                        On phones only the open player shows; the row above replaces the thumbnail. */}
+                    <div className={`relative ${isAudio ? 'bg-slate-900' : 'bg-black'} ${isPlaying ? '' : 'hidden md:block'}`}>
                       {isPlaying && videoUrl && isAudio ? (
                         <WaveformPlayer src={videoUrl} decodeSrc={getWorkerDownloadUrl(rec) || undefined} />
                       ) : isPlaying && videoUrl ? (
@@ -3406,9 +3595,10 @@ function RealtimeMeeting() {
                       )}
                     </div>
 
-                    {/* Recording info & actions */}
-                    <div className="p-3">
-                      <div className="flex items-start gap-3">
+                    {/* Recording info & actions — the info row is desktop-only; the
+                        inline panels below it (rename, metadata, transcript) show on both. */}
+                    <div className="p-3 max-md:py-0 max-md:has-[>:nth-child(2)]:pb-3">
+                      <div className="hidden md:flex items-start gap-3">
                         <div className="flex-1 min-w-0">
                           <p className="text-white text-sm font-medium truncate" title={displayTitle}>{displayTitle}</p>
                           {rec.title && rec.title !== rec.name && (
@@ -3447,7 +3637,7 @@ function RealtimeMeeting() {
                           >
                             ⬇
                           </button>
-                          {((rec.source !== 'realtimekit') || !!rec.download_url) && (
+                          {caps.hasFile && (
                             <button
                               className="px-2.5 py-1.5 bg-teal-700 hover:bg-teal-600 rounded text-white text-xs disabled:opacity-40"
                               onClick={(e) => {
@@ -3466,7 +3656,7 @@ function RealtimeMeeting() {
                               {extractingAudioKey === rec.key ? '⏳' : '🎵'}
                             </button>
                           )}
-                          {((rec.source !== 'realtimekit') || !!rec.download_url) && (
+                          {caps.hasFile && (
                             <button
                               className="px-2.5 py-1.5 bg-purple-700 hover:bg-purple-600 rounded text-white text-xs disabled:opacity-40"
                               onClick={() => transcribeRecording(rec)}
@@ -3478,7 +3668,7 @@ function RealtimeMeeting() {
                                 : '📝 Transcribe'}
                             </button>
                           )}
-                          {canManageRecs && rec.source !== 'realtimekit' && (
+                          {caps.canShare && (
                             <button
                               className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 rounded text-white text-xs disabled:opacity-40"
                               onClick={() => shareRecording(rec)}
@@ -3490,7 +3680,7 @@ function RealtimeMeeting() {
                           )}
                           {canManageRecs && (
                             <>
-                              {(rec.source === 'r2' || rec.source === 'r2-own') && (
+                              {caps.canEditMeta && (
                                 <button
                                   className="px-2 py-1.5 text-slate-400 hover:text-white text-xs"
                                   title="Edit portfolio metadata"
@@ -3797,10 +3987,182 @@ function RealtimeMeeting() {
 
         {/* ─── Slugs Tab ─── */}
         {lobbyTab === 'slugs' && (
-        <div className="flex flex-col flex-1 gap-6 p-8 overflow-y-auto">
+        <div className="flex flex-col flex-1 gap-6 p-4 md:p-8 overflow-y-auto">
           <SlugManagement userRooms={myRooms.standardRooms} />
         </div>
         )}
+
+        {/* Mobile lobby: bottom tab bar + the room and invite sheets */}
+        <nav aria-label="Lobby" className="md:hidden flex-none flex justify-around px-2 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-slate-800 bg-slate-950">
+          {([
+            { id: 'meetings', label: 'Meetings', Icon: Video, show: true },
+            { id: 'recordings', label: 'Recordings', Icon: PlayCircle, show: true },
+            { id: 'slugs', label: 'Slugs', Icon: Link2, show: canRoleManageMeetings(readStoredUser()?.role) },
+          ] as const).filter(t => t.show).map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              aria-current={lobbyTab === id ? 'page' : undefined}
+              onClick={() => {
+                setLobbyTab(id);
+                if (id === 'recordings' && recordings.length === 0) fetchRecordings();
+              }}
+              className={`w-24 min-h-[52px] flex flex-col items-center justify-center gap-0.5 text-xs ${lobbyTab === id ? 'text-teal-300 font-bold' : 'text-slate-400 font-medium'}`}
+            >
+              <Icon size={22} aria-hidden="true" />
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        {(() => {
+          const index = standardRooms.findIndex(r => r.id === roomSheetId);
+          const room = index >= 0 ? standardRooms[index] : null;
+          return (
+            <BottomSheet
+              open={!!room}
+              onClose={() => { setRoomSheetId(null); setEditingRoomTitle(null); }}
+              title={room ? plainRoomLabel(room, index) : ''}
+              subtitle={room ? roomTitles[room.id] : undefined}
+            >
+              {room && (
+                <div className="flex flex-col gap-3 pb-1">
+                  {editingRoomTitle === room.id ? renderRenameRoom(room) : (
+                    <button
+                      type="button"
+                      className="flex items-center gap-3 min-h-12 px-3 rounded-xl bg-slate-800 text-left text-base font-medium"
+                      onClick={() => { setEditingRoomTitle(room.id); setRoomTitleDraft(roomTitles[room.id] || ''); }}
+                    >
+                      <Pencil size={18} aria-hidden="true" />
+                      Rename room
+                    </button>
+                  )}
+                  {renderOpenRoomSettings(room)}
+                  {renderWaitingRoomSettings()}
+                </div>
+              )}
+            </BottomSheet>
+          );
+        })()}
+
+        <BottomSheet
+          open={inviteSheetOpen && !!inviteLink}
+          // Clear the link too, so closing the sheet doesn't leave the inline panel behind.
+          onClose={() => { setInviteSheetOpen(false); setInviteLink(null); }}
+          title="Invite"
+          subtitle="Share the link or send an email invitation"
+        >
+          {renderInvitePanel()}
+        </BottomSheet>
+
+        {(() => {
+          const rec = recordings.find((r: any) => r.key === recSheetKey);
+          if (!rec) return null;
+          const caps = recordingCaps(rec);
+          const isPlaying = playingKey === rec.key;
+          const close = () => { setRecSheetKey(null); setConfirmDeleteKey(null); };
+          const run = (action: () => void) => () => { close(); action(); };
+          const minutes = rec.duration != null
+            ? `${Math.floor(rec.duration / 60)}:${String(Math.floor(rec.duration % 60)).padStart(2, '0')}`
+            : null;
+          return (
+            <BottomSheet
+              open
+              onClose={close}
+              title={rec.title || rec.name}
+              subtitle={[rec.uploaded && new Date(rec.uploaded).toLocaleDateString(), minutes, isAudioRecording(rec) ? 'Audio' : 'Video'].filter(Boolean).join(' · ')}
+            >
+              <div className="grid grid-cols-3 gap-2 mb-2">
+                <button
+                  type="button"
+                  onClick={run(() => setPlayingKey(isPlaying ? null : rec.key))}
+                  className="min-h-[72px] rounded-2xl bg-teal-400 text-slate-950 text-sm font-bold flex flex-col items-center justify-center gap-1"
+                >
+                  {isPlaying ? <Square size={20} aria-hidden="true" /> : <Play size={20} fill="currentColor" aria-hidden="true" />}
+                  {isPlaying ? 'Close' : 'Play'}
+                </button>
+                <button
+                  type="button"
+                  disabled={!caps.canShare || sharingKey === rec.key}
+                  onClick={run(() => shareRecording(rec))}
+                  className="min-h-[72px] rounded-2xl bg-slate-800 text-sm font-semibold flex flex-col items-center justify-center gap-1 disabled:opacity-40"
+                >
+                  <Link2 size={20} aria-hidden="true" />
+                  Share link
+                </button>
+                <button
+                  type="button"
+                  disabled={!caps.hasFile || transcribingKey === rec.key}
+                  onClick={run(() => transcribeRecording(rec))}
+                  className="min-h-[72px] rounded-2xl bg-slate-800 text-sm font-semibold flex flex-col items-center justify-center gap-1 disabled:opacity-40"
+                >
+                  <FileText size={20} aria-hidden="true" />
+                  Transcribe
+                </button>
+              </div>
+              <SheetAction icon={<Download size={20} />} label="Download video" onClick={run(() => downloadRecording(rec))} />
+              {caps.hasFile && (
+                <>
+                  <SheetAction icon={<Music size={20} />} label="Download audio" hint="WAV" disabled={extractingAudioKey === rec.key} onClick={run(() => downloadRecordingAudio(rec, 'wav'))} />
+                  <SheetAction icon={<Music size={20} />} label="Download audio" hint="MP3" disabled={extractingAudioKey === rec.key} onClick={run(() => downloadRecordingAudio(rec, 'mp3'))} />
+                </>
+              )}
+              {caps.canEditMeta && (
+                <SheetAction icon={<Tag size={20} />} label="Portfolio details" hint="title, labels" onClick={run(() => startEditingRecordingMetadata(rec))} />
+              )}
+              {caps.canManage && (
+                <>
+                  <SheetAction icon={<Type size={20} />} label="Rename" onClick={run(() => { setRenamingKey(rec.key); setRenameDraft(rec.name); })} />
+                  {/* Two taps: a sheet row sits under the thumb, and delete is permanent. */}
+                  <SheetAction
+                    icon={<Trash2 size={20} />}
+                    label={confirmDeleteKey === rec.key ? 'Tap again to delete permanently' : 'Delete recording'}
+                    danger
+                    disabled={deletingKey === rec.key}
+                    onClick={() => {
+                      if (confirmDeleteKey !== rec.key) { setConfirmDeleteKey(rec.key); return; }
+                      close();
+                      deleteRecording(rec.key);
+                    }}
+                  />
+                </>
+              )}
+            </BottomSheet>
+          );
+        })()}
+
+        <BottomSheet open={recToolsOpen} onClose={() => setRecToolsOpen(false)} title="Recordings">
+          {canRoleManageMeetings(readStoredUser()?.role) && (
+            <>
+              <SheetAction
+                icon={<Upload size={20} />}
+                label={uploadingRecording ? `Uploading${uploadingRecordingProgress != null ? ` ${uploadingRecordingProgress}%` : '…'}` : 'Upload video'}
+                disabled={uploadingRecording}
+                onClick={() => { setRecToolsOpen(false); recordingUploadInputRef.current?.click(); }}
+              />
+              <SheetAction
+                icon={<Mic size={20} />}
+                label="Record audio"
+                disabled={uploadingRecording || showAudioRecorder}
+                onClick={() => { setRecToolsOpen(false); setShowAudioRecorder(true); }}
+              />
+            </>
+          )}
+          {recordings.some((r: any) => r.source === 'realtimekit') && (
+            <SheetAction
+              icon={<CloudDownload size={20} />}
+              label={syncingRecordings ? 'Syncing…' : 'Sync cloud recordings to R2'}
+              disabled={syncingRecordings}
+              onClick={() => { setRecToolsOpen(false); syncRecordingsToR2(); }}
+            />
+          )}
+          <SheetAction
+            icon={<CloudDownload size={20} />}
+            label={syncingStream ? 'Syncing…' : 'Sync stream recordings to R2'}
+            disabled={syncingStream}
+            onClick={() => { setRecToolsOpen(false); syncStreamRecordingsToR2(); }}
+          />
+        </BottomSheet>
 
         {/* Audio download format menu — rendered via portal into document.body so it isn't
             clipped by the recording card's overflow-hidden (needed there to round the corners
