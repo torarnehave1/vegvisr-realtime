@@ -52,6 +52,19 @@ const DASHBOARD_BASE = 'https://dashboard.vegvisr.org';
 
 const AuthContext = createContext<AuthUser | null>(null);
 
+// Lets the in-meeting view hide the app's top bar on phones, where every pixel
+// above the video pushes the meeting controls down.
+const TopBarContext = createContext<(hidden: boolean) => void>(() => {});
+
+function HideTopBarOnMobile() {
+  const setHidden = useContext(TopBarContext);
+  useEffect(() => {
+    setHidden(true);
+    return () => setHidden(false);
+  }, [setHidden]);
+  return null;
+}
+
 type StandardRoom = {
   id: string;
   kind?: string | null;
@@ -4244,8 +4257,11 @@ function RealtimeMeeting() {
 
   return (
     <div className="flex flex-col w-full h-full">
+      <HideTopBarOnMobile />
+      {/* Invite bar is desktop-only: on a phone it took ~75px above the video.
+          Phones invite from the lobby's room card (Invite) before starting. */}
       {inviteLink && (
-        <div className="flex flex-col gap-1.5 px-3 py-2 bg-slate-800 border-b border-slate-700 text-sm">
+        <div className="hidden md:flex flex-col gap-1.5 px-3 py-2 bg-slate-800 border-b border-slate-700 text-sm">
           <div className="flex items-center gap-2">
             <span className="text-slate-400 text-xs whitespace-nowrap">Invite link:</span>
             <input
@@ -4316,6 +4332,7 @@ function RealtimeMeeting() {
 function AuthGate({ children }: { children: React.ReactNode }) {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authStatus, setAuthStatus] = useState<'checking' | 'authed' | 'anonymous'>('checking');
+  const [topBarHiddenOnMobile, setTopBarHiddenOnMobile] = useState(false);
 
   const setAuthCookie = (token: string) => {
     if (!token) return;
@@ -4466,6 +4483,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   if (authStatus === 'authed') {
     return (
       <AuthContext.Provider value={authUser}>
+      <TopBarContext.Provider value={setTopBarHiddenOnMobile}>
         <div className="flex flex-col h-screen supports-[height:100dvh]:h-dvh bg-slate-950 text-white">
           {/* Height is the *visible* viewport (dvh), not 100vh: on Android Chrome
               100vh includes the area behind the URL bar, which pushed the meeting
@@ -4473,7 +4491,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
           {/* Slim top bar: logo + screen-record on the left, user / log-out on
               the right. EcosystemNav menu removed; logo moved here so the lobby
               no longer needs its own banner. */}
-          <div className="flex-shrink-0 border-b border-slate-800 bg-slate-900 px-4 py-2 flex items-center justify-between gap-2">
+          <div className={`flex-shrink-0 border-b border-slate-800 bg-slate-900 px-4 py-2 flex items-center justify-between gap-2 ${topBarHiddenOnMobile ? 'max-md:hidden' : ''}`}>
             <div className="flex items-center gap-3">
               <img
                 src="https://favicons.vegvisr.org/favicons/1774561024334-1-1774561031809-512x512.png"
@@ -4510,6 +4528,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
             {children}
           </div>
         </div>
+      </TopBarContext.Provider>
       </AuthContext.Provider>
     );
   }
